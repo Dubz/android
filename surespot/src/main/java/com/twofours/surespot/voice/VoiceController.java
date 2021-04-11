@@ -8,6 +8,7 @@ import android.media.MediaPlayer;
 import android.media.MediaPlayer.OnCompletionListener;
 import android.media.MediaPlayer.OnPreparedListener;
 import android.net.Uri;
+import android.text.TextUtils;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.SeekBar;
@@ -17,9 +18,10 @@ import com.twofours.surespot.R;
 import com.twofours.surespot.SurespotLog;
 import com.twofours.surespot.chat.ChatController;
 import com.twofours.surespot.chat.ChatManager;
-import com.twofours.surespot.chat.ChatUtils;
 import com.twofours.surespot.chat.SurespotMessage;
 import com.twofours.surespot.identity.IdentityController;
+import com.twofours.surespot.network.IAsyncCallback;
+import com.twofours.surespot.utils.ChatUtils;
 import com.twofours.surespot.utils.UIUtils;
 import com.twofours.surespot.utils.Utils;
 
@@ -37,7 +39,7 @@ public class VoiceController {
     private static String mTo = null;
 
     public static final int SEND_THRESHOLD = 3500;
-    public static final int MAX_TIME = 10000;
+    public static final int MAX_TIME = 30000;
     public static final int INTERVAL = 50;
     private static final int SEEK_MAX = 1000;
 
@@ -52,13 +54,14 @@ public class VoiceController {
     private static File mAudioFile;
     static MediaPlayer mPlayer;
     static SeekBar mSeekBar;
-    static boolean mPlaying = false;
+    private static boolean mPlaying = false;
     private static VolumeEnvelopeView mEnvelopeView;
     private static View mVoiceHeaderView;
     private static TextView mVoiceRecTimeLeftView;
     private static float mTimeLeft;
     private static String mSendingFile;
     private static Activity mActivity;
+    private static IAsyncCallback<SurespotMessage> mPlayCompletedCallback;
 
     enum State {
         INITIALIZING, READY, STARTED, RECORDING
@@ -207,6 +210,8 @@ public class VoiceController {
             mPlayer = null;
         }
 
+        SurespotMessage message = mMessage;
+
         mMessage = null;
         if (mAudioFile != null) {
             mAudioFile.delete();
@@ -215,9 +220,16 @@ public class VoiceController {
         mPlaying = false;
         updatePlayControls();
 
+        if (mPlayCompletedCallback != null) {
+            mPlayCompletedCallback.handleResponse(message);
+        }
     }
 
     public static synchronized void startRecording(Activity context, String from, String to) {
+        if (TextUtils.isEmpty(from) || TextUtils.isEmpty(to)) {
+            return;
+        }
+
         if (!mRecording) {
             stopPlaying();
             // disable rotation
@@ -307,7 +319,9 @@ public class VoiceController {
             mPlaying = true;
             mMessage = message;
             mSeekBar = seekBar;
-            mSeekBar.setMax(SEEK_MAX);
+            if (mSeekBar != null) {
+                mSeekBar.setMax(SEEK_MAX);
+            }
 
             if (mSeekBarThread == null) {
                 mSeekBarThread = new SeekBarThread();
@@ -517,7 +531,8 @@ public class VoiceController {
         public void completed() {
             SurespotLog.v(TAG, "SeekBarThread completed");
             mRun = false;
-
+            mLastPosition = 0;
+            setProgress(mSeekBar, 0);
         }
     }
 
@@ -542,10 +557,12 @@ public class VoiceController {
         }
     }
 
-    private static SurespotMessage getSeekbarMessage(SeekBar seekBar) {
-        WeakReference<SurespotMessage> ref = (WeakReference<SurespotMessage>) seekBar.getTag(R.id.tagMessage);
-        if (ref != null) {
-            return ref.get();
+    public static SurespotMessage getSeekbarMessage(SeekBar seekBar) {
+        if (seekBar != null) {
+            WeakReference<SurespotMessage> ref = (WeakReference<SurespotMessage>) seekBar.getTag(R.id.tagMessage);
+            if (ref != null) {
+                return ref.get();
+            }
         }
 
         return null;
@@ -554,11 +571,18 @@ public class VoiceController {
 
     public static void pause() {
         stopPlaying();
-
+        mPlayCompletedCallback = null;
     }
 
     public static synchronized boolean isRecording() {
         return mState == State.RECORDING;
+    }
+    public static synchronized boolean isPlaying() {
+        return mPlaying;
+    }
+
+    public static void setPlayCompletedCallback(IAsyncCallback<SurespotMessage> callback) {
+        mPlayCompletedCallback = callback;
     }
 
 }

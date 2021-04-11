@@ -1,20 +1,22 @@
 package com.twofours.surespot.activities;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.ServiceConnection;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.PorterDuff;
 import android.graphics.Rect;
 import android.hardware.Camera;
 import android.media.AudioManager;
+import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
@@ -23,6 +25,9 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Parcelable;
+import android.support.v4.app.ActivityCompat;
+import android.support.v4.app.FragmentActivity;
+import android.support.v4.content.ContextCompat;
 import android.support.v4.view.GravityCompat;
 import android.support.v4.view.ViewPager;
 import android.support.v4.widget.DrawerLayout;
@@ -45,6 +50,8 @@ import android.view.View.OnTouchListener;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.view.WindowManager.LayoutParams;
+import android.view.animation.Animation;
+import android.view.animation.Transformation;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.AdapterView;
@@ -59,6 +66,7 @@ import android.widget.TextView.OnEditorActionListener;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GoogleApiAvailability;
+import com.rockerhieu.emojicon.EmojiconEditText;
 import com.rockerhieu.emojicon.EmojiconsView;
 import com.rockerhieu.emojicon.OnEmojiconClickedListener;
 import com.rockerhieu.emojicon.emoji.Emojicon;
@@ -71,23 +79,27 @@ import com.twofours.surespot.billing.BillingActivity;
 import com.twofours.surespot.billing.BillingController;
 import com.twofours.surespot.chat.ChatController;
 import com.twofours.surespot.chat.ChatManager;
-import com.twofours.surespot.chat.ChatUtils;
 import com.twofours.surespot.chat.SoftKeyboardLayout;
 import com.twofours.surespot.chat.SurespotDrawerLayout;
+import com.twofours.surespot.chat.SurespotMessage;
+import com.twofours.surespot.filetransfer.FileTransferUtils;
 import com.twofours.surespot.friends.AutoInviteData;
 import com.twofours.surespot.friends.Friend;
+import com.twofours.surespot.gifs.GifDetails;
+import com.twofours.surespot.gifs.GifSearchHandler;
 import com.twofours.surespot.identity.IdentityController;
+import com.twofours.surespot.images.GalleryModeHandler;
 import com.twofours.surespot.images.ImageCaptureHandler;
 import com.twofours.surespot.images.ImageSelectActivity;
 import com.twofours.surespot.network.IAsyncCallback;
 import com.twofours.surespot.network.IAsyncCallbackTriplet;
+import com.twofours.surespot.network.IAsyncCallbackTuple;
 import com.twofours.surespot.network.MainThreadCallbackWrapper;
 import com.twofours.surespot.network.NetworkManager;
 import com.twofours.surespot.services.CredentialCachingService;
-import com.twofours.surespot.services.CredentialCachingService.CredentialCachingBinder;
 import com.twofours.surespot.services.RegistrationIntentService;
 import com.twofours.surespot.ui.LetterOrDigitInputFilter;
-import com.twofours.surespot.utils.FileUtils;
+import com.twofours.surespot.utils.ChatUtils;
 import com.twofours.surespot.utils.UIUtils;
 import com.twofours.surespot.utils.Utils;
 import com.twofours.surespot.voice.VoiceController;
@@ -103,17 +115,22 @@ import java.util.List;
 import okhttp3.Call;
 import okhttp3.Response;
 
+import static android.view.View.GONE;
 import static com.twofours.surespot.SurespotConstants.ExtraNames.MESSAGE_TO;
 
-public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBackspaceClickedListener, OnEmojiconClickedListener {
+public class MainActivity extends FragmentActivity implements EmojiconsView.OnEmojiconBackspaceClickedListener, OnEmojiconClickedListener {
     public static final String TAG = "MainActivity";
     private static final int PLAY_SERVICES_RESOLUTION_REQUEST = 9000;
+    private static final String MESSAGE_MODE_KEYBOARD = "keyboard";
+    private static final String MESSAGE_MODE_EMOJI = "emoji";
+    private static final String MESSAGE_MODE_GIF = "gif";
+    private static final String MESSAGE_MODE_CAMERA = "camera";
+    private static final String MESSAGE_MODE_GALLERY = "gallery";
+    private static final String MESSAGE_MODE_MORE = "more";
 
-    private Context mContext = null;
     private ArrayList<MenuItem> mMenuItems = new ArrayList<MenuItem>();
     private IAsyncCallback<Object> m401Handler;
 
-    private boolean mCacheServiceBound;
     private Menu mMenuOverflow;
     private BroadcastReceiver mExternalStorageReceiver;
     private boolean mExternalStorageAvailable = false;
@@ -121,13 +138,19 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
     private ImageView mHomeImageView;
 
     private SoftKeyboardLayout mActivityLayout;
-    private EditText mEtMessage;
+    private EmojiconEditText mEtMessage;
     private EditText mEtInvite;
     private View mSendButton;
     private EmojiconsView mEmojiView;
-    private ImageView mEmojiButton;
-    private boolean mEmojiShowing;
     private ImageView mQRButton;
+    private ImageView mExpandButton;
+    private ImageView mEmojiButton;
+    private ImageView mGifButton;
+    private ImageView mCameraButton;
+    private ImageView mGalleryButton;
+    private ImageView mMoreButton;
+
+
     private Friend mCurrentFriend;
     private boolean mFriendHasBeenSet;
     private ImageView mIvInvite;
@@ -153,6 +176,18 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
     private FrameLayout mContentFrame;
     private DrawerLayout mDrawerLayout;
     private LayoutParams mWindowLayoutParams;
+    private GifSearchHandler mGifHandler;
+    private GalleryModeHandler mGalleryModeHandler;
+    private EditText mEtGifSearch;
+    private View mGiphySearchFieldLayout;
+    private boolean mWaitingForKeyboardToShow = false;
+    private View mMessageModeView;
+    private String mCurrentMessageMode;
+    private View mGalleryView;
+    private View mButtons;
+    private boolean isCollapsed = true;
+    private ImageView mPoweredByGiphyView;
+    private View mOldView;
 
     @Override
     protected void onNewIntent(Intent intent) {
@@ -219,9 +254,6 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
 
         getWindow().setFlags(LayoutParams.FLAG_SECURE, LayoutParams.FLAG_SECURE);
 
-
-        mContext = this;
-
         SharedPreferences sp = getSharedPreferences(mUser, Context.MODE_PRIVATE);
         mEnterToSend = sp.getBoolean("pref_enter_to_send", true);
 
@@ -245,14 +277,7 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
                 mSigningUp = intent.getBooleanExtra("signingUp", false);
 
                 if (!mSigningUp) {
-                    if (mCacheServiceBound) {
-                        processLaunch();
-                    }
-                    else {
-                        if (!mCacheServiceBound) {
-                            bindCacheService();
-                        }
-                    }
+                    processLaunch();
                 }
             }
         }
@@ -267,21 +292,9 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
         else {
             mUser = user;
 
-            if (!mCacheServiceBound) {
-                bindCacheService();
-            }
 
-            if (mCacheServiceBound) {
-                SurespotLog.d(TAG, "cache service already bound");
-                if (!mUnlocking) {
-                    SurespotLog.d(TAG, "processLaunch calling postServiceProcess");
-                    postServiceProcess();
-                }
-                else {
-                    SurespotLog.d(TAG, "unlock activity launched, not post service processing until resume");
-                }
-            }
-
+            SurespotLog.d(TAG, "processLaunch calling postServiceProcess");
+            postServiceProcess();
         }
     }
 
@@ -366,6 +379,7 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
         mIvSend = (ImageView) mainView.findViewById(R.id.ivSend);
         mIvHome = (ImageView) mainView.findViewById(R.id.ivHome);
         mSendButton = (View) mainView.findViewById(R.id.bSend);
+        mButtons = mainView.findViewById(R.id.fButtons);
 
         mSendButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -375,9 +389,9 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
 
                     Friend friend = mCurrentFriend;
                     if (friend != null) {
-
-                        if (mEtMessage.getText().toString().length() > 0 && !cc.isFriendDeleted(friend.getName())) {
-                            sendMessage(friend.getName());
+                        String message = mEtMessage.getText().toString();
+                        if (message.length() > 0 && !cc.isFriendDeleted(friend.getName())) {
+                            sendMessage(friend.getName(), message);
                         }
                         else {
                             // go to home
@@ -406,14 +420,15 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
                             cc.closeTab();
                         }
                         else {
-                            if (mEtMessage.getText().toString().length() > 0) {
-                                sendMessage(friend.getName());
+                            String message = mEtMessage.getText().toString();
+                            if (message.length() > 0) {
+                                sendMessage(friend.getName(), message);
                             }
                             else {
                                 SharedPreferences sp = MainActivity.this.getSharedPreferences(mUser, Context.MODE_PRIVATE);
                                 boolean disableVoice = sp.getBoolean(SurespotConstants.PrefNames.VOICE_DISABLED, false);
                                 if (!disableVoice) {
-                                    VoiceController.startRecording(MainActivity.this, mUser, friend.getName());
+                                    checkPermissionVoice(MainActivity.this);
                                 }
                                 else {
                                     cc.closeTab();
@@ -484,17 +499,41 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
             }
         });
 
-        mEmojiButton = (ImageView) mainView.findViewById(R.id.bEmoji);
-        mEmojiButton.setOnClickListener(new View.OnClickListener() {
-
+        View.OnClickListener messageModeClickListener = new View.OnClickListener() {
             @Override
             public void onClick(View v) {
+                toggleMessageMode(v.getTag().toString());
+            }
+        };
 
-                toggleEmojiDrawer();
+        mEmojiButton = (ImageView) mainView.findViewById(R.id.bEmoji);
+        mEmojiButton.setOnClickListener(messageModeClickListener);
+        mEmojiButton.setTag("emoji");
+
+        mExpandButton = (ImageView) mainView.findViewById(R.id.bExpand);
+        mExpandButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                disableMessageMode(true);
             }
         });
 
-        setEmojiIcon(true);
+
+        mGifButton = (ImageView) findViewById(R.id.bGIF);
+        mGifButton.setOnClickListener(messageModeClickListener);
+        mGifButton.setTag("gif");
+
+        mCameraButton = (ImageView) mainView.findViewById(R.id.bCamera);
+        mCameraButton.setOnClickListener(messageModeClickListener);
+        mCameraButton.setTag("camera");
+
+        mGalleryButton = (ImageView) mainView.findViewById(R.id.bGallery);
+        mGalleryButton.setOnClickListener(messageModeClickListener);
+        mGalleryButton.setTag("gallery");
+
+        mMoreButton = (ImageView) mainView.findViewById(R.id.bPlus);
+        mMoreButton.setOnClickListener(messageModeClickListener);
+        mMoreButton.setTag("more");
 
         mQRButton = (ImageView) mainView.findViewById(R.id.bQR);
         mQRButton.setOnClickListener(new View.OnClickListener() {
@@ -505,22 +544,27 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
             }
         });
 
-        mEtMessage = (EditText) mainView.findViewById(R.id.etMessage);
+        mEtMessage = mainView.findViewById(R.id.etMessage);
         mEtMessage.setOnEditorActionListener(new OnEditorActionListener() {
             @Override
             public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
                 boolean handled = false;
+                SurespotLog.d(TAG, "on EditorAction (text)");
 
                 Friend friend = mCurrentFriend;
                 if (friend != null) {
                     if (actionId == EditorInfo.IME_ACTION_SEND) {
-                        sendMessage(friend.getName());
+                        SurespotLog.d(TAG, "on EditorAction ACTION_SEND (text)");
+                        sendMessage(friend.getName(), v.getText().toString());
                         handled = true;
                     }
-
-                    if (mEnterToSend == true && actionId == EditorInfo.IME_NULL && event.getAction() == KeyEvent.ACTION_DOWN) {
-                        sendMessage(friend.getName());
-                        handled = true;
+                    else {
+                        //if we pasted the message it might have carriage returns which cause it to send, so suppress
+                        if (mEnterToSend && actionId == EditorInfo.IME_NULL && event != null && event.getAction() == KeyEvent.ACTION_DOWN) {
+                            SurespotLog.d(TAG, "on EditorAction ACTION_DOWN (text)");
+                            sendMessage(friend.getName(), v.getText().toString());
+                            handled = true;
+                        }
                     }
                 }
                 return handled;
@@ -528,27 +572,21 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
         });
 
         TextWatcher tw = new ChatTextWatcher();
-        mEtMessage.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConstants.MAX_MESSAGE_LENGTH)});
+        mEtMessage.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConfiguration.MAX_MESSAGE_LENGTH)});
+        SurespotLog.d(TAG, "adding text watcher");
         mEtMessage.addTextChangedListener(tw);
-
-        OnTouchListener editTouchListener = new OnTouchListener() {
-
+        mEtMessage.setOnTouchListener(new OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
-                if (mEmojiShowing) {
-                    return true;
+                if (MotionEvent.ACTION_DOWN == event.getAction()) {
+                    setMessageMode(MESSAGE_MODE_KEYBOARD);
                 }
-
                 return false;
             }
-        };
-
-        mEtMessage.setOnTouchListener(editTouchListener);
+        });
 
         mEtInvite = (EditText) mainView.findViewById(R.id.etInvite);
-        mEtInvite.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConstants.MAX_USERNAME_LENGTH), new LetterOrDigitInputFilter()});
-        //mEtInvite.setOnTouchListener(editTouchListener);
-
+        mEtInvite.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConfiguration.MAX_USERNAME_LENGTH), new LetterOrDigitInputFilter()});
         mEtInvite.setOnEditorActionListener(new OnEditorActionListener() {
             @Override
             public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
@@ -564,7 +602,73 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
             }
         });
 
+        mEtGifSearch = (EditText) mainView.findViewById(R.id.etGiphy);
+        mEtGifSearch.setOnEditorActionListener(new OnEditorActionListener() {
+            @Override
+            public boolean onEditorAction(final TextView v, int actionId, KeyEvent event) {
+                boolean handled = false;
+                SurespotLog.d(TAG, "onEditorAction, actionId: %d, keyEvent: %s", actionId, event);
 
+                if (actionId == EditorInfo.IME_ACTION_SEARCH) {
+                    final CharSequence text = v.getText();
+
+                    Runnable runnable = new Runnable() {
+                        @Override
+                        public void run() {
+                            //   showGifDrawer();
+                            if (!TextUtils.isEmpty(text)) {
+                                mGifHandler.searchGifs(text.toString());
+                            }
+                            v.setText("");
+                        }
+                    };
+
+                    mHandler.post(runnable);
+                    handled = true;
+                }
+
+                return handled;
+            }
+        });
+
+        mEtGifSearch.addTextChangedListener(new TextWatcher() {
+
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+                setButtonText();
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+            }
+        });
+
+        mEtGifSearch.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConfiguration.MAX_SEARCH_LENGTH)});
+        mGiphySearchFieldLayout = mainView.findViewById(R.id.giphySearchFieldLayout);
+
+        mPoweredByGiphyView = mainView.findViewById(R.id.poweredByGiphy);
+        mPoweredByGiphyView.setImageResource(UIUtils.isDarkTheme(this) ? R.drawable.powered_by_giphy_dark : R.drawable.powered_by_giphy_light);
+        mPoweredByGiphyView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                Runnable runnable = new Runnable() {
+                    @Override
+                    public void run() {
+                        String searchText = mEtGifSearch.getText().toString();
+                        if (!TextUtils.isEmpty(searchText)) {
+                            mGifHandler.searchGifs(searchText);
+                        }
+                        mEtGifSearch.setText("");
+                    }
+                };
+
+                mHandler.post(runnable);
+            }
+        });
     }
 
     private void switchUser(String identityName) {
@@ -574,7 +678,7 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
             ChatManager.detach(this, this.hashCode());
             mUser = identityName;
 
-            CredentialCachingService ccs = SurespotApplication.getCachingService();
+            CredentialCachingService ccs = SurespotApplication.getCachingService(this);
             if (ccs == null || !ccs.setSession(this, mUser)) {
                 launchLogin();
                 return;
@@ -653,32 +757,8 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
     }
 
 
-    private ServiceConnection mConnection = new ServiceConnection() {
-        public void onServiceConnected(android.content.ComponentName name, android.os.IBinder service) {
-            SurespotLog.d(TAG, "caching service bound");
-            CredentialCachingBinder binder = (CredentialCachingBinder) service;
-            CredentialCachingService ccs = binder.getService();
-
-            SurespotApplication.setCachingService(ccs);
-            mCacheServiceBound = true;
-
-            if (!mUnlocking) {
-                SurespotLog.d(TAG, "caching service calling postServiceProcess");
-                postServiceProcess();
-            }
-            else {
-                SurespotLog.d(TAG, "unlock activity launched, not post service processing until resume");
-            }
-        }
-
-        @Override
-        public void onServiceDisconnected(ComponentName name) {
-
-        }
-    };
-
     private void postServiceProcess() {
-        CredentialCachingService ccs = SurespotApplication.getCachingService();
+        CredentialCachingService ccs = SurespotApplication.getCachingService(this);
         if (ccs == null || !ccs.setSession(this, mUser)) {
             launchLogin();
             return;
@@ -691,11 +771,12 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
         launch();
     }
 
-    private void    setupGlobal() {
+    private void setupGlobal() {
         if (checkPlayServices()) {
             // Start IntentService to register this application with GCM.
+
             Intent intent = new Intent(this, RegistrationIntentService.class);
-            startService(intent);
+            RegistrationIntentService.enqueueWork(this, intent);
         }
 
         setupBilling();
@@ -710,23 +791,6 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
         mDrawerLayout.setScrimColor(Color.argb(224, 0, 0, 0));
         View header = getLayoutInflater().inflate(R.layout.drawer_header, mDrawerList, false);
         mDrawerList.addHeaderView(header, null, false);
-        mDrawerLayout.addDrawerListener(new DrawerLayout.SimpleDrawerListener() {
-            @Override
-            public void onDrawerSlide(View drawerView, float slideOffset) {
-                //    SurespotLog.d(TAG, "slideOffset: %f", slideOffset);
-                if (slideOffset > 0.5) {
-//                    if (mActivityLayout.isKeyboardVisible()) {
-//                        sendBackPressed();
-//                    }
-//                    else {
-                    if (isEmojiVisible()) {
-                        hideEmojiDrawer(false);
-                    }
-                    //   }
-                    //hideSoftKeyboard();
-                }
-            }
-        });
 
         updateDrawer();
     }
@@ -774,10 +838,42 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
         mActivityLayout.setOnKeyboardShownListener(new SoftKeyboardLayout.OnKeyboardShownListener() {
             @Override
             public void onKeyboardShown(boolean visible) {
-                //  SurespotLog.d(TAG, "OnKeyboardShown: visible %b", visible);
-                if (!visible && mActivityLayout.getPaddingBottom() == 0 && isEmojiVisible()) {
-                    hideEmojiDrawer(false);
+                Configuration config = getResources().getConfiguration();
+
+
+                //SurespotLog.d(TAG, "OnKeyboardShown: visible %b, height: %d", visible, mActivityLayout.getKeyboardHeight());
+                //gif doesn't have a drawer so don't hide it
+//                if (!visible &&
+//                        mActivityLayout.getPaddingBottom() == 0 &&
+//                        messageModeActive() && mCurrentMessageMode != null &&
+//                        !mCurrentMessageMode.equals(MESSAGE_MODE_GIF)) {
+//                    SurespotLog.d(TAG, "OnKeyboardShown: hiding emoji drawer");
+//                    disableMessageMode(false);
+//                }
+//                else {
+
+
+                if (visible && mWaitingForKeyboardToShow) {
+                    if (MESSAGE_MODE_GALLERY.equals(mCurrentMessageMode)) {
+                        setGalleryMode();
+                        mWaitingForKeyboardToShow = false;
+                    }
+                    else {
+                        if (MESSAGE_MODE_EMOJI.equals(mCurrentMessageMode)) {
+                            switchViews();
+                            mWaitingForKeyboardToShow = false;
+                        }
+                        else {
+                            SurespotLog.d(TAG, "OnKeyboardShown: hiding emoji drawer waiting for keyboard to show");
+                            disableMessageMode(false);
+                            mWaitingForKeyboardToShow = false;
+                        }
+                    }
+
+
                 }
+
+                //  }
             }
         });
 
@@ -787,7 +883,7 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
                 mUser,
                 this.hashCode(),
                 (ViewPager) mainView.findViewById(R.id.pager),
-                getFragmentManager(),
+                getSupportFragmentManager(),
                 titlePageIndicator,
                 mMenuItems,
                 new IAsyncCallback<Boolean>() {
@@ -941,7 +1037,7 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
             SurespotLog.d(TAG, "setting mUnlocking to false");
             mUnlocking = false;
 
-            if (SurespotApplication.getCachingService() != null) {
+            if (SurespotApplication.getCachingService(this) != null) {
                 SurespotLog.d(TAG, "unlock activity was launched, resume calling postServiceProcess");
                 postServiceProcess();
             }
@@ -959,7 +1055,25 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
 
         setBackgroundImage();
         setEditTextHints();
+        mEtMessage.setText(Utils.getUserSharedPrefsString(this, mUser, "message_text"));
         ChatManager.resume(mUser, this.hashCode());
+        VoiceController.setPlayCompletedCallback(new VoicePlayCompletedHandler());
+    }
+
+    private class VoicePlayCompletedHandler implements IAsyncCallback<SurespotMessage> {
+
+        @Override
+        public void handleResponse(SurespotMessage message) {
+            SurespotLog.d(TAG, "voice message play completed");
+            //if we're still on the same tab
+            if (message != null && mCurrentFriend != null && message.getFrom().equals(mCurrentFriend.getName())) {
+                //tell the adapter
+                ChatController cc = ChatManager.getChatController(mUser);
+                if (cc != null) {
+                    cc.handleVoiceMessagePlayed(message);
+                }
+            }
+        }
     }
 
     @Override
@@ -984,8 +1098,25 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
             mDialog.dismiss();
         }
 
+        if (messageModeActive()) {
+            disableMessageMode(false);
+        }
+
+        try {
+            hideKeyboard();
+        }
+        catch (Exception e) {
+        }
         ChatManager.pause(mUser, this.hashCode());
 
+        if (mEtMessage != null) {
+            if (TextUtils.isEmpty(mEtMessage.getText())) {
+                Utils.removeUserPref(this, mUser, "message_text");
+            }
+            else {
+                Utils.putUserSharedPrefsString(this, mUser, "message_text", mEtMessage.getText().toString());
+            }
+        }
 
         mResumed = false;
     }
@@ -1041,6 +1172,38 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
                 }
                 break;
 
+            case SurespotConstants.IntentRequestCodes.REQUEST_SELECT_FILE:
+
+                if (resultCode == RESULT_OK) {
+                    final ChatController cc = ChatManager.getChatController(mUser);
+                    if (cc == null) {
+                        SurespotLog.w(TAG, "onOptionItemSelected select File: chat controller null, bailing");
+                        return;
+                    }
+                    String currentChat = cc.getCurrentChat();
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2 && data.getClipData() != null) {
+                        SurespotLog.d(TAG, "chose, clip data: %s", data.getClipData());
+                        if (mUser != null && currentChat != null) {
+                            FileTransferUtils.handleClipDataFileSelection(this, cc, mUser, currentChat, data);
+                        }
+                    }
+                    else if (data.getData() != null) {
+                        SurespotLog.d(TAG, "chose, data: %s", data);
+
+                        if (mUser != null && currentChat != null) {
+
+                            FileTransferUtils.uploadFileAsync(this, cc, mUser, currentChat, data.getData());
+                        }
+                    }
+                    else {
+                        SurespotLog.i(TAG, "Not able to support multiple file selection and no appropriate data returned from file picker");
+                        Utils.makeLongToast(this, getString(R.string.could_not_select_image));
+                    }
+
+                }
+                break;
+
+
             case SurespotConstants.IntentRequestCodes.PURCHASE:
                 // Pass on the activity result to the helper for handling
                 if (!SurespotApplication.getBillingController().getIabHelper().handleActivityResult(requestCode, resultCode, data)) {
@@ -1080,18 +1243,20 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
 
         mMenuOverflow = menu;
 
+        //    mMenuItems.add(menu.findItem(R.id.menu_mute_bar));
+        mMenuItems.add(menu.findItem(R.id.menu_close_all_tabs));
         mMenuItems.add(menu.findItem(R.id.menu_close_bar));
-        mMenuItems.add(menu.findItem(R.id.menu_send_image_bar));
-
-        MenuItem captureItem = menu.findItem(R.id.menu_capture_image_bar);
-        if (hasCamera()) {
-            mMenuItems.add(captureItem);
-            captureItem.setEnabled(FileUtils.isExternalStorageMounted());
-        }
-        else {
-            SurespotLog.d(TAG, "hiding capture image menu option");
-            menu.findItem(R.id.menu_capture_image_bar).setVisible(false);
-        }
+//        mMenuItems.add(menu.findItem(R.id.menu_send_image_bar));
+//
+//        MenuItem captureItem = menu.findItem(R.id.menu_capture_image_bar);
+//        if (hasCamera()) {
+//            mMenuItems.add(captureItem);
+//            captureItem.setEnabled(FileUtils.isExternalStorageMounted());
+//        }
+//        else {
+//            SurespotLog.d(TAG, "hiding capture image menu option");
+//            menu.findItem(R.id.menu_capture_image_bar).setVisible(false);
+//        }
 
         mMenuItems.add(menu.findItem(R.id.menu_clear_messages));
         // nag nag nag
@@ -1154,61 +1319,46 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
                     cc.setCurrentChat(null);
                 }
                 return true;
+//            case R.id.menu_mute_bar:
+//                if (mCurrentFriend != null) {
+//                    mCurrentFriend.setMuted(!mCurrentFriend.isMuted());
+//                    cc.saveFriends();
+//                }
+//                return true;
+            case R.id.menu_close_all_tabs:
+                cc.closeAllTabs();
+                return true;
             case R.id.menu_close_bar:
 
                 cc.closeTab();
                 return true;
-            case R.id.menu_send_image_bar:
-                if (currentChat == null || mCurrentFriend == null) {
-                    return true;
-                }
-
-                // can't send images to deleted folk
-                if (mCurrentFriend.isDeleted()) {
-                    return true;
-                }
-
-                new AsyncTask<Void, Void, Void>() {
-                    protected Void doInBackground(Void... params) {
-                        if (mCurrentFriend == null) {
-                            return null;
-                        }
-                        Intent intent = new Intent(MainActivity.this, ImageSelectActivity.class);
-                        intent.putExtra("to", currentChat);
-                        intent.putExtra("toAlias", mCurrentFriend.getNameOrAlias());
-                        intent.putExtra("from", mUser);
-                        intent.putExtra("size", ImageSelectActivity.IMAGE_SIZE_LARGE);
-                        // set start intent to avoid restarting every rotation
-                        intent.putExtra("start", true);
-                        intent.putExtra("friendImage", false);
-                        startActivity(intent);
-                        return null;
-                    }
-
-                    ;
-
-                }.execute();
-
-                return true;
-            case R.id.menu_capture_image_bar:
-                if (currentChat == null) {
-                    return true;
-                }
-                // can't send images to deleted folk
-                if (mCurrentFriend != null && mCurrentFriend.isDeleted()) {
-                    return true;
-                }
-
-                new AsyncTask<Void, Void, Void>() {
-                    protected Void doInBackground(Void... params) {
-
-                        mImageCaptureHandler = new ImageCaptureHandler(mUser, currentChat);
-                        mImageCaptureHandler.capture(MainActivity.this);
-                        return null;
-                    }
-                }.execute();
-
-                return true;
+//            case R.id.menu_send_file_bar:
+//                if (currentChat == null || mCurrentFriend == null) {
+//                    return true;
+//                }
+//
+//                // can't send images to deleted folk
+//                if (mCurrentFriend.isDeleted()) {
+//                    return true;
+//                }
+//
+//
+//                String plural = "";
+//                Intent intent = new Intent();
+//                intent.setType("*/*");
+//
+//                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
+//                    intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+//                    plural = "s";
+//                }
+//
+//                intent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+//                intent.setAction(Intent.ACTION_GET_CONTENT);
+//                SurespotLog.d(TAG, "startActivityForResult");
+//                startActivityForResult(Intent.createChooser(intent, getString(R.string.select_file) + plural), SurespotConstants.IntentRequestCodes.REQUEST_SELECT_FILE);
+//
+//
+//                return true;
             case R.id.menu_settings_bar:
 
                 new AsyncTask<Void, Void, Void>() {
@@ -1270,9 +1420,7 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
                     }
                 }.execute();
                 return true;
-//            case R.id.menu_purchase_voice:
-//                showVoicePurchaseDialog(false);
-//                return true;
+
             default:
                 return false;
 
@@ -1312,12 +1460,8 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
 
     private void destroy() {
         SurespotLog.d(TAG, "destroy unbinding");
-
-        if (mCacheServiceBound && mConnection != null) {
-            unbindService(mConnection);
-        }
-
         ChatManager.detach(this, this.hashCode());
+        Utils.removeUserPref(this, mUser, "message_text");
     }
 
 
@@ -1389,16 +1533,15 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
 
     public void enableImageMenuItems() {
 
-        if (mMenuItems != null) {
-            for (MenuItem menuItem : mMenuItems) {
-                if (menuItem.getItemId() == R.id.menu_capture_image_bar || menuItem.getItemId() == R.id.menu_send_image_bar) {
-
-                    menuItem.setEnabled(mExternalStorageWriteable);
-
-                }
-            }
-        }
-
+//        if (mMenuItems != null) {
+//            for (MenuItem menuItem : mMenuItems) {
+//                if (menuItem.getItemId() == R.id.menu_capture_image_bar || menuItem.getItemId() == R.id.menu_send_image_bar) {
+//
+//                    menuItem.setEnabled(mExternalStorageWriteable);
+//
+//                }
+//            }
+//        }
     }
 
     @Override
@@ -1454,39 +1597,51 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
         };
 
         mHandler.post(runnable);
-
     }
 
 
     class ChatTextWatcher implements TextWatcher {
+        private int mDelta;
 
         @Override
         public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+
         }
 
         @Override
         public void onTextChanged(CharSequence s, int start, int before, int count) {
-
-            // mEtMessage.removeTextChangedListener(this);
-
             setButtonText();
-            // mEtMessage.setText(EmojiParser.getInstance().addEmojiSpans(s.toString()));
-            // mEtMessage.addTextChangedListener(this);
+            mDelta = count - before;
+            SurespotLog.v(TAG, "onTextChanged, start: %d, before: %d, count: %d, delta: %d", start, before, count, mDelta);
         }
 
         @Override
         public void afterTextChanged(Editable s) {
-            if (MainActivity.this.mEnterToSend && s.toString().contains("\n")) {
-                int idx = s.toString().indexOf('\n');
-                s.delete(idx, idx + 1);
-                ChatController cc = ChatManager.getChatController(mUser);
-
-                if (cc != null && mEtMessage.getText().toString().length() > 0 && !cc.isFriendDeleted(mCurrentFriend.getName())) {
-                    sendMessage(mCurrentFriend.getName());
-                }
+            //if they pasted or shared the text the delta will be bigger than 1
+            // don't do anything as they may want to edit first
+            if (mDelta > 1) {
+                return;
             }
 
-            // mEtMessage.setSelection(s.length());
+            String message = s.toString();
+            if (message.length() > 0 && MainActivity.this.mEnterToSend && message.contains("\n")) {
+
+                //strip last carriage return before sending
+                if (message.endsWith("\n")) {
+                    message = message.substring(0, message.length() - 1);
+                }
+
+                //if the carriage return was the only character, there will be no characters left so reset the edit text
+                if (message.length() == 0) {
+                    s.clear();
+                    return;
+                }
+
+                ChatController cc = ChatManager.getChatController(mUser);
+                if (cc != null && mCurrentFriend != null && !cc.isFriendDeleted(mCurrentFriend.getName())) {
+                    sendMessage(mCurrentFriend.getName(), message);
+                }
+            }
         }
     }
 
@@ -1508,9 +1663,6 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
                 String sharedText = intent.getExtras().get(Intent.EXTRA_TEXT).toString();
                 SurespotLog.d(TAG, "received action send, data: %s", sharedText);
                 mEtMessage.append(sharedText);
-                // requestFocus();
-                // clear the intent
-
             }
             else {
                 if (type.startsWith(SurespotConstants.MimeTypes.IMAGE)) {
@@ -1567,8 +1719,7 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
     }
 
 
-    private void sendMessage(String username) {
-        final String message = mEtMessage.getText().toString();
+    private void sendMessage(String username, String message) {
         if (!message.isEmpty()) {
             ChatController cc = ChatManager.getChatController(mUser);
             if (cc != null) {
@@ -1579,37 +1730,38 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
     }
 
     public boolean backButtonPressed() {
-
-        SurespotLog.d(TAG, "backButtonPressed");
+        SurespotLog.d(TAG, "backButtonPressed, keyboardVisible: %b, message mode: %b, emoji visible: %b", mActivityLayout.isKeyboardVisible(), mCurrentMessageMode, messageModeActive());
 
         if (mDrawerLayout.isDrawerOpen(GravityCompat.START)) {
             mDrawerLayout.closeDrawer(GravityCompat.START);
             return true;
         }
 
+        // if (messageModeActive()) {
+        disableMessageMode(false);
+        //  }
+
         //returning false will cause the keyboard to be hidden
         if (mActivityLayout.isKeyboardVisible()) {
+            SurespotLog.d(TAG, "keyboard showing backButtonPressed returning false");
             return false;
         }
 
-        if (isEmojiVisible()) {
-            hideEmojiDrawer(false);
-            return true;
-        }
-
-
         //go to home page if we not
-        if (mCurrentFriend != null) {
+        if (mCurrentFriend != null)
+
+        {
             ChatController cc = ChatManager.getChatController(mUser);
             if (cc != null) {
                 cc.setCurrentChat(null);
+                SurespotLog.d(TAG, "backButtonPressed returning true");
                 return true;
             }
         }
 
+        SurespotLog.d(TAG, "backButtonPressed returning false at the bottom");
         return false;
     }
-
 
     private void inviteFriend() {
 
@@ -1673,60 +1825,245 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
     public void setButtonText() {
         if (mCurrentFriend == null) {
             mIvInvite.setVisibility(View.VISIBLE);
-            mIvVoice.setVisibility(View.GONE);
-            mIvHome.setVisibility(View.GONE);
-            mIvSend.setVisibility(View.GONE);
+            mIvVoice.setVisibility(GONE);
+            mIvHome.setVisibility(GONE);
+            mIvSend.setVisibility(GONE);
         }
         else {
             if (mCurrentFriend.isDeleted()) {
-                mIvInvite.setVisibility(View.GONE);
-                mIvVoice.setVisibility(View.GONE);
+                mIvInvite.setVisibility(GONE);
+                mIvVoice.setVisibility(GONE);
                 mIvHome.setVisibility(View.VISIBLE);
-                mIvSend.setVisibility(View.GONE);
+                mIvSend.setVisibility(GONE);
             }
             else {
                 if (mEtMessage.getText().length() > 0) {
-                    mIvInvite.setVisibility(View.GONE);
-                    mIvVoice.setVisibility(View.GONE);
-                    mIvHome.setVisibility(View.GONE);
+                    mIvInvite.setVisibility(GONE);
+                    mIvVoice.setVisibility(GONE);
+                    mIvHome.setVisibility(GONE);
                     mIvSend.setVisibility(View.VISIBLE);
                 }
                 else {
-                    mIvInvite.setVisibility(View.GONE);
+                    mIvInvite.setVisibility(GONE);
                     SharedPreferences sp = getSharedPreferences(mUser, Context.MODE_PRIVATE);
                     boolean disableVoice = sp.getBoolean(SurespotConstants.PrefNames.VOICE_DISABLED, false);
 
                     if (disableVoice) {
-                        mIvVoice.setVisibility(View.GONE);
+                        mIvVoice.setVisibility(GONE);
                         mIvHome.setVisibility(View.VISIBLE);
                     }
                     else {
                         mIvVoice.setVisibility(View.VISIBLE);
-                        mIvHome.setVisibility(View.GONE);
+                        mIvHome.setVisibility(GONE);
                     }
 
-                    mIvSend.setVisibility(View.GONE);
+                    mIvSend.setVisibility(GONE);
                 }
             }
+        }
+    }
 
+    private void updateMessageBar() {
+        SurespotLog.d(TAG, "updateMessageBar");
+        boolean expand = false;
+        View bHighlight = null;
+        SharedPreferences settings = getSharedPreferences("surespot_preferences", android.content.Context.MODE_PRIVATE);
+        boolean black = settings.getBoolean("pref_black", false);
+        int selectedMask = ContextCompat.getColor(this, com.rockerhieu.emojicon.R.color.selectedMask);
+        int unselectedMask = ContextCompat.getColor(this, black ? com.rockerhieu.emojicon.R.color.unselectedMaskDark : com.rockerhieu.emojicon.R.color.unselectedMaskLight);
+
+
+        if (mCurrentMessageMode == null) {
+            if (mCurrentFriend == null) {
+                mQRButton.setVisibility(View.VISIBLE);
+                mExpandButton.setVisibility(View.GONE);
+                mEmojiButton.setVisibility(View.GONE);
+                mGifButton.setVisibility(View.GONE);
+                mCameraButton.setVisibility(View.GONE);
+                mGalleryButton.setVisibility(View.GONE);
+                mMoreButton.setVisibility(View.GONE);
+            }
+            else {
+                mQRButton.setVisibility(View.GONE);
+                mExpandButton.setVisibility(View.GONE);
+                mEmojiButton.setVisibility(View.VISIBLE);
+                mGifButton.setVisibility(View.VISIBLE);
+                mCameraButton.setVisibility(View.VISIBLE);
+                mGalleryButton.setVisibility(View.VISIBLE);
+                mMoreButton.setVisibility(View.GONE);
+                expand = true;
+            }
+        }
+        else {
+
+            View bShow;
+
+
+            switch (mCurrentMessageMode) {
+                case MESSAGE_MODE_KEYBOARD:
+                    bShow = mExpandButton;
+                    bHighlight = mExpandButton;
+                    break;
+                case MESSAGE_MODE_EMOJI:
+                    bShow = mEmojiButton;
+                    bHighlight = mEmojiButton;
+                    break;
+                case MESSAGE_MODE_GIF:
+                    bShow = mGifButton;
+                    bHighlight = mGifButton;
+                    break;
+                case MESSAGE_MODE_CAMERA:
+                    bShow = mCameraButton;
+                    bHighlight = mCameraButton;
+                    expand = true;
+                    break;
+                case MESSAGE_MODE_GALLERY:
+                    bShow = mGalleryButton;
+                    bHighlight = mGalleryButton;
+                    expand = true;
+                    break;
+                case MESSAGE_MODE_MORE:
+                    bShow = mMoreButton;
+                    bHighlight = mMoreButton;
+                    expand = true;
+                    break;
+                default:
+                    bShow = mEmojiButton;
+                    break;
+
+            }
+
+            if (!expand) {
+                mExpandButton.setVisibility(bShow == mExpandButton ? View.VISIBLE : View.GONE);
+                mEmojiButton.setVisibility(bShow == mEmojiButton ? View.VISIBLE : View.GONE);
+                mGifButton.setVisibility(bShow == mGifButton ? View.VISIBLE : View.GONE);
+                mGalleryButton.setVisibility(bShow == mGalleryButton ? View.VISIBLE : View.GONE);
+                mCameraButton.setVisibility(bShow == mCameraButton ? View.VISIBLE : View.GONE);
+                mMoreButton.setVisibility(bShow == mMoreButton ? View.GONE : View.GONE);
+            }
+            else {
+                mQRButton.setVisibility(View.GONE);
+                mExpandButton.setVisibility(View.GONE);
+                mEmojiButton.setVisibility(View.VISIBLE);
+                mGifButton.setVisibility(View.VISIBLE);
+                mCameraButton.setVisibility(View.VISIBLE);
+                mGalleryButton.setVisibility(View.VISIBLE);
+                mMoreButton.setVisibility(View.GONE);
+            }
+        }
+
+        mExpandButton.setColorFilter(bHighlight == mExpandButton ? selectedMask : unselectedMask, PorterDuff.Mode.SRC_IN);
+        mEmojiButton.setColorFilter(bHighlight == mEmojiButton ? selectedMask : unselectedMask, PorterDuff.Mode.SRC_IN);
+        mGifButton.setColorFilter(bHighlight == mGifButton ? selectedMask : unselectedMask, PorterDuff.Mode.SRC_IN);
+        mCameraButton.setColorFilter(bHighlight == mCameraButton ? selectedMask : unselectedMask, PorterDuff.Mode.SRC_IN);
+        mGalleryButton.setColorFilter(bHighlight == mGalleryButton ? selectedMask : unselectedMask, PorterDuff.Mode.SRC_IN);
+        mMoreButton.setColorFilter(bHighlight == mMoreButton ? selectedMask : unselectedMask, PorterDuff.Mode.SRC_IN);
+
+        if (expand) {
+            expand();
+        }
+        else {
+            collapse();
+        }
+    }
+
+
+    public void expand() {
+
+        if (isCollapsed) {
+            isCollapsed = false;
+            // Older versions of android (pre API 21) cancel animations for views with a height of 0.
+            mButtons.getLayoutParams().width = 1;
+
+            ViewGroup.LayoutParams lp = mButtons.getLayoutParams();
+            int widthSpec = View.MeasureSpec.makeMeasureSpec(lp.width, View.MeasureSpec.UNSPECIFIED);
+            mButtons.measure(widthSpec, LayoutParams.MATCH_PARENT);
+            final int initialWidth = mButtons.getWidth();
+            final int targetWidth = mButtons.getMeasuredWidth();
+
+            SurespotLog.d(TAG, "expand, targetWidth: %d, currentWidth: %d", targetWidth, mButtons.getWidth());
+
+            Animation a = new Animation() {
+                @Override
+                protected void applyTransformation(float interpolatedTime, Transformation t) {
+                    int newWidth = (int) (initialWidth + ((targetWidth - initialWidth) * interpolatedTime));
+                    SurespotLog.d(TAG, "expand, newWidth: %d, time: %f", newWidth, interpolatedTime);
+                    mButtons.getLayoutParams().width = newWidth;
+                    mButtons.requestLayout();
+                }
+
+                @Override
+                public boolean willChangeBounds() {
+                    return true;
+                }
+            };
+
+            // 1dp/ms
+            a.setDuration((int) (targetWidth / mButtons.getContext().getResources().getDisplayMetrics().density));
+            mButtons.startAnimation(a);
+        }
+    }
+
+
+    public void collapse() {
+        if (!isCollapsed) {
+            isCollapsed = true;
+
+            mButtons.getLayoutParams().width = 1;
+
+            ViewGroup.LayoutParams lp = mButtons.getLayoutParams();
+
+            int widthSpec = View.MeasureSpec.makeMeasureSpec(lp.width, View.MeasureSpec.UNSPECIFIED);
+            mButtons.measure(widthSpec, LayoutParams.MATCH_PARENT);
+            final int initialWidth = mButtons.getWidth();
+            final int finalWidth = mButtons.getMeasuredWidth();
+            //SurespotLog.d(TAG, "collapse, initialWidth: %d, desiredWidth: %d", initialWidth, finalWidth);
+
+            if (initialWidth < finalWidth) return;
+
+            Animation a = new Animation() {
+                @Override
+                protected void applyTransformation(float interpolatedTime, Transformation t) {
+
+                    int newWidth = initialWidth - (int) ((initialWidth - finalWidth) * interpolatedTime);
+                    //SurespotLog.d(TAG, "collapse, newWidth: %d", newWidth);
+                    mButtons.getLayoutParams().width = newWidth;
+                    mButtons.requestLayout();
+
+                }
+
+                @Override
+                public boolean willChangeBounds() {
+                    return true;
+                }
+            };
+
+            // 1dp/ms
+
+            a.setDuration((int) ((initialWidth - finalWidth) / mButtons.getContext().getResources().getDisplayMetrics().density));
+            //a.setDuration(1000);
+            mButtons.startAnimation(a);
         }
     }
 
     private void handleTabChange(Friend friend) {
-        SurespotLog
-                .v(TAG,
-                        "handleTabChange, mFriendHasBeenSet: %b, currentFriend is null: %b",
-                        mFriendHasBeenSet, mCurrentFriend == null);
+        SurespotLog.v(TAG,
+                "handleTabChange, mFriendHasBeenSet: %b, currentFriend is null: %b",
+                mFriendHasBeenSet, mCurrentFriend == null);
 
         if (friend == null) {
-            mEmojiButton.setVisibility(View.GONE);
-            mEtMessage.setVisibility(View.GONE);
+
+            if (messageModeActive()) {
+                disableMessageMode(false);
+            }
+            mEtMessage.setVisibility(GONE);
             mEtInvite.setVisibility(View.VISIBLE);
-            //  mEmojiView.setVisibility(View.GONE);
 
-            mQRButton.setVisibility(View.VISIBLE);
-            mEtInvite.requestFocus();
 
+            if (mActivityLayout.isKeyboardVisible()) {
+                SurespotLog.v(TAG, "handleTabChange requesting invite edit text focus");
+                requestFocus(mEtInvite);
+            }
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
                 getActionBar().setHomeAsUpIndicator(R.drawable.ic_drawer);
@@ -1739,11 +2076,8 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
                         // change the icon according to your needs
                         .setImageResource(R.drawable.ic_drawer);
             }
-
-
         }
         else {
-
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR2) {
                 getActionBar().setHomeAsUpIndicator(R.drawable.ic_ab_back_holo_dark_am);
             }
@@ -1756,53 +2090,25 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
             }
 
             if (friend.isDeleted()) {
-
-                mEmojiButton.setVisibility(View.GONE);
-                mEtMessage.setVisibility(View.GONE);
+                mEtMessage.setVisibility(GONE);
 
 
             }
             else {
                 mEtMessage.setVisibility(View.VISIBLE);
-                mEmojiButton.setVisibility(View.VISIBLE);
             }
 
-            mEtInvite.setVisibility(View.GONE);
-            mQRButton.setVisibility(View.GONE);
-            mEtMessage.requestFocus();
+            mEtInvite.setVisibility(GONE);
+            if (mActivityLayout.isKeyboardVisible()) {
+                requestFocus(mEtMessage);
+            }
         }
 
         // if keyboard is showing and we want to show emoji or vice versa, just toggle emoji
         mCurrentFriend = friend;
-
-        if (friend == null) {
-//            if (mActivityLayout.isKeyboardVisible()) {
-//                sendBackPressed();
-//            }
-//            else {
-            if (isEmojiVisible()) {
-                hideEmojiDrawer(false);
-            }
-            //  }
-        }
-
         setButtonText();
+        updateMessageBar();
         mFriendHasBeenSet = true;
-    }
-
-    private void setEmojiIcon(final boolean keyboardShowing) {
-        boolean black = Utils.getSharedPrefsBoolean(this, SurespotConstants.PrefNames.BLACK);
-        if (keyboardShowing) {
-            mEmojiButton.setImageResource(R.drawable.smiley);
-        }
-        else {
-            if (black) {
-                mEmojiButton.setImageResource(R.drawable.ic_action_keyboard_grey);
-            }
-            else {
-                mEmojiButton.setImageResource(R.drawable.ic_action_keyboard);
-            }
-        }
     }
 
     private void setBackgroundImage() {
@@ -1838,6 +2144,8 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
         if (inviteHintShown++ < 6) {
             mEtInvite.setHint(R.string.invite_hint);
         }
+
+        mEtGifSearch.setHint(R.string.search_gifs);
 
         Editor editor = sp.edit();
         editor.putInt("messageHintShown", messageHintShown);
@@ -1912,107 +2220,677 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
+        SurespotLog.d(TAG, "onConfigurationChanged, screenHeight: %d, orientation: %d", newConfig.screenHeightDp, newConfig.orientation);
+        hideKeyboard();
+        disableMessageMode(false);
     }
 
-    private void bindCacheService() {
-        SurespotLog.d(TAG, "binding cache service");
-        Intent cacheIntent = new Intent(this, CredentialCachingService.class);
-        startService(cacheIntent);
-        bindService(cacheIntent, mConnection, Context.BIND_AUTO_CREATE);
+    public boolean messageModeActive() {
+        return !TextUtils.isEmpty(mCurrentMessageMode);
     }
 
+    private void toggleMessageMode(String mode) {
+        SurespotLog.d(TAG, "toggleMessageMode, mode: %s, currentMode: %s, emoji visible: %b", mode, mCurrentMessageMode, messageModeActive());
 
-    public boolean isEmojiVisible() {
-        return mEmojiShowing;
-    }
+        if (messageModeActive()) {
+            if (mode.equals(mCurrentMessageMode)) {
 
-    private void toggleEmojiDrawer() {
-        // TODO animate drawer enter & exit
 
-        if (isEmojiVisible()) {
-            hideEmojiDrawer();
+                mWaitingForKeyboardToShow = true;
+                disableMessageMode(true);
+                return;
+
+            }
         }
-        else {
-            showEmojiDrawer();
-        }
+        setMessageMode(mode);
     }
 
-    private void showEmojiDrawer() {
-        int keyboardHeight = mActivityLayout.getKeyboardHeight();
-
-        SurespotLog.d(TAG, "showEmojiDrawer height: %d", keyboardHeight);
-        mEmojiShowing = true;
-
+    private void createEmojiView() {
         if (mEmojiView == null) {
             mEmojiView = (EmojiconsView) LayoutInflater
                     .from(this).inflate(R.layout.emojicons, null, false);
 
-
-            //   mEmojiView.setId(R.id.emoji_drawer);
             mEmojiView.setOnEmojiconBackspaceClickedListener(this);
             mEmojiView.setOnEmojiconClickedListener(this);
+        }
+    }
+
+    private void setMessageMode(String messageMode) {
+        SurespotLog.d(TAG, "setMessageMode, mode: %s", messageMode);
+
+        final InputMethodManager input = (InputMethodManager) this.getSystemService(Context.INPUT_METHOD_SERVICE);
+        final WindowManager wm = (WindowManager) this.getSystemService(Activity.WINDOW_SERVICE);
+        mOldView = mMessageModeView;
+        final View gifFrame = findViewById(R.id.gifFrame);
+
+        switch (messageMode) {
+            case MESSAGE_MODE_KEYBOARD:
+                mCurrentMessageMode = MESSAGE_MODE_KEYBOARD;
+                mMessageModeView = null;
+
+                try {
+
+                    Runnable runnable = new Runnable() {
+                        @Override
+                        public void run() {
+                            if (mOldView != null && mOldView.getParent() != null && mOldView != mMessageModeView) {
+                                wm.removeView(mOldView);
+                            }
+                        }
+                    };
+                    mHandler.postDelayed(runnable, 500);
+                }
+                catch (Exception e) {
+                    SurespotLog.e(TAG, e, "error adding emoji view");
+                    return;
+                }
+
+                requestFocus(mEtMessage);
+                if (input != null) {
+                    input.showSoftInput(mEtMessage, 0);
+                }
+
+                gifFrame.setVisibility(GONE);
+                mGiphySearchFieldLayout.setVisibility(GONE);
+                mEtMessage.setVisibility(View.VISIBLE);
+                mSendButton.setVisibility(View.VISIBLE);
+
+                mActivityLayout.findViewById(R.id.pager).setPadding(0, 0, 0, 0);
+                updateMessageBar();
+                break;
+            case MESSAGE_MODE_EMOJI:
+                mCurrentMessageMode = MESSAGE_MODE_EMOJI;
+                createEmojiView();
+                mMessageModeView = mEmojiView;
+                gifFrame.setVisibility(GONE);
+                mGiphySearchFieldLayout.setVisibility(GONE);
+                mEtMessage.setVisibility(View.VISIBLE);
+                mSendButton.setVisibility(View.VISIBLE);
+
+                mActivityLayout.findViewById(R.id.pager).setPadding(0, 0, 0, 0);
+                updateMessageBar();
+
+                if (!mActivityLayout.isKeyboardVisible()) {
+                    mWaitingForKeyboardToShow = true;
+                    mEtMessage.setVisibility(View.VISIBLE);
+                    requestFocus(mEtMessage);
+                    if (input != null) {
+                        input.showSoftInput(mEtMessage, 0);
+                    }
+                }
+                else {
+                    switchViews();
+                }
+
+                break;
+            case MESSAGE_MODE_GIF:
+                mCurrentMessageMode = MESSAGE_MODE_GIF;
+                if (mGifHandler == null) {
+                    mGifHandler = new GifSearchHandler(this, mUser, mActivityLayout);
+                    mGifHandler.setGifSelectedCallback(new IAsyncCallback<GifDetails>() {
+                        @Override
+                        public void handleResponse(GifDetails result) {
+                            if (result != null) {
+                                sendGifMessage(result.getUrl());
+                            }
+                        }
+                    });
+
+                    mGifHandler.setGifSearchTextCallback(new IAsyncCallback<String>() {
+                        @Override
+                        public void handleResponse(String result) {
+                            if (mEtGifSearch != null) {
+                                mEtGifSearch.setText(result + " ");
+                                mEtGifSearch.setSelection(mEtGifSearch.getText().length());
+                            }
+                        }
+                    });
+                }
+
+                mGifHandler.refreshContextAndViews(this, mActivityLayout);
+
+                try {
+                    Runnable runnable = new Runnable() {
+                        @Override
+                        public void run() {
+                            if (mOldView != null && mOldView.getParent() != null) {
+                                wm.removeView(mOldView);
+                            }
+                        }
+                    };
+                    mHandler.postDelayed(runnable, 500);
+                }
+                catch (Exception e) {
+                    SurespotLog.e(TAG, e, "error adding emoji view");
+                    return;
+                }
+
+                mGiphySearchFieldLayout.setVisibility(View.VISIBLE);
+                requestFocus(mEtGifSearch);
+                if (input != null) {
+                    input.showSoftInput(mEtGifSearch, 0);
+                }
+
+                mEtInvite.setVisibility(View.INVISIBLE);
+                mEtMessage.setVisibility(View.INVISIBLE);
+                mSendButton.setVisibility(GONE);
 
 
-            mWindowLayoutParams = new WindowManager.LayoutParams();
-            mWindowLayoutParams.gravity = Gravity.BOTTOM | Gravity.LEFT;
-            mWindowLayoutParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_PANEL;
-            mWindowLayoutParams.token = ((Activity) mContext).getWindow().getDecorView().getWindowToken();
-            mWindowLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+                Runnable runnable = new Runnable() {
+                    @Override
+                    public void run() {
+                        gifFrame.setVisibility(View.VISIBLE);
+
+                        //hard coded to 150 in the view, easier than trying to measure the view here
+                        int gifFrameHeight = (int) UIUtils.pxFromDp(MainActivity.this, 150);
+                        mActivityLayout.findViewById(R.id.pager).setPadding(0, 0, 0, gifFrameHeight);
+                        SurespotLog.d(TAG, "setMessageMode, gifFrameHeight: %d", gifFrameHeight);
+
+                    }
+                };
+
+                mHandler.postDelayed(runnable, 100);
+                mMessageModeView = null;
+
+                updateMessageBar();
+                break;
+            case MESSAGE_MODE_GALLERY:
+                // can't send images to deleted folk
+                if (mCurrentFriend != null && mCurrentFriend.isDeleted()) {
+                    return;
+                }
+                checkPermissionGallery(MainActivity.this);
+                break;
+            case MESSAGE_MODE_CAMERA:
+                // can't send images to deleted folk
+                if (mCurrentFriend != null && mCurrentFriend.isDeleted()) {
+                    return;
+                }
+
+                //check permissions
+                checkPermissionCamera(MainActivity.this);
+                break;
         }
 
-        mWindowLayoutParams.height = keyboardHeight;
-        mWindowLayoutParams.width = UIUtils.getDisplaySize(this).x;
+        //  SurespotLog.v(TAG, "setMode keyboard height: %d", keyboardHeight);
+    }
 
-        WindowManager wm = (WindowManager) mContext.getSystemService(Activity.WINDOW_SERVICE);
-
-        try {
-            if (mEmojiView.getParent() != null) {
-                wm.removeViewImmediate(mEmojiView);
+    private void checkPermissionGallery(final Activity activity) {
+        SurespotLog.d(TAG, "checkPermissionReadStorage");
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.READ_EXTERNAL_STORAGE)) {
+                UIUtils.createAndShowConfirmationDialog(
+                        activity,
+                        getString(R.string.need_storage_permission_gallery),
+                        getString(R.string.permission_required),
+                        getString(R.string.ok),
+                        getString(R.string.cancel),
+                        new IAsyncCallback<Boolean>() {
+                            @Override
+                            public void handleResponse(Boolean result) {
+                                if (result) {
+                                    ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, SurespotConstants.IntentRequestCodes.REQUEST_SELECT_IMAGE);
+                                }
+                            }
+                        }
+                );
+            }
+            else {
+                ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, SurespotConstants.IntentRequestCodes.REQUEST_SELECT_IMAGE);
             }
         }
-        catch (Exception e) {
-            SurespotLog.e(TAG, e, "error removing emoji view");
+        else {
+            showGallery();
         }
+    }
 
+    private void showGallery() {
+        final InputMethodManager input = (InputMethodManager) this.getSystemService(Context.INPUT_METHOD_SERVICE);
+        final View gifFrame = findViewById(R.id.gifFrame);
+
+        mCurrentMessageMode = MESSAGE_MODE_GALLERY;
+        gifFrame.setVisibility(GONE);
+        mGiphySearchFieldLayout.setVisibility(GONE);
+        mSendButton.setVisibility(View.VISIBLE);
+
+        //wait until the keyboard's shown if it's not visible so we can get the height
+        if (!mActivityLayout.isKeyboardVisible()) {
+            mWaitingForKeyboardToShow = true;
+            mEtMessage.setVisibility(View.VISIBLE);
+            requestFocus(mEtMessage);
+            if (input != null) {
+                input.showSoftInput(mEtMessage, 0);
+            }
+        }
+        else {
+            setGalleryMode();
+        }
+    }
+
+
+    private void checkPermissionCamera(final Activity activity) {
+        SurespotLog.d(TAG, "checkPermissionReadStorage");
+        //camera needs camera and write_external_storage
+        if ((ContextCompat.checkSelfPermission(activity, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) &&
+            (ContextCompat.checkSelfPermission(activity, Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED)) {
+
+            captureImage();
+        }
+        else {
+            if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA) || ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+                UIUtils.createAndShowConfirmationDialog(
+                        activity,
+                        getString(R.string.need_camera_permission),
+                        getString(R.string.permission_required),
+                        getString(R.string.ok),
+                        getString(R.string.cancel),
+                        new IAsyncCallback<Boolean>() {
+                            @Override
+                            public void handleResponse(Boolean result) {
+                                if (result) {
+                                    ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE}, SurespotConstants.IntentRequestCodes.REQUEST_CAPTURE_IMAGE);
+                                }
+                            }
+                        }
+                );
+            }
+            else {
+                ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE}, SurespotConstants.IntentRequestCodes.REQUEST_CAPTURE_IMAGE);
+            }
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode,
+                                           String permissions[], int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        switch (requestCode) {
+            case SurespotConstants.IntentRequestCodes.REQUEST_CAPTURE_IMAGE: {
+                if ((grantResults.length > 1) && (grantResults[0] == PackageManager.PERMISSION_GRANTED) && (grantResults[1] == PackageManager.PERMISSION_GRANTED)) {
+                    captureImage();
+                }
+                else {
+                    UIUtils.createAndShowConfirmationDialog(
+                            this,
+                            getString(R.string.need_camera_permission),
+                            getString(R.string.permission_required),
+                            getString(R.string.ok),
+                            getString(R.string.cancel),
+                            new IAsyncCallback<Boolean>() {
+                                @Override
+                                public void handleResponse(Boolean result) {
+                                    if (result) {
+                                        ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE}, SurespotConstants.IntentRequestCodes.REQUEST_CAPTURE_IMAGE);
+                                    }
+                                }
+                            });
+                }
+            }
+            break;
+            case SurespotConstants.IntentRequestCodes.REQUEST_SELECT_IMAGE: {
+                if ((grantResults.length > 0) && (grantResults[0] == PackageManager.PERMISSION_GRANTED)) {
+                    showGallery();
+                }
+                else {
+                    UIUtils.createAndShowConfirmationDialog(
+                            this,
+                            getString(R.string.need_storage_permission_gallery),
+                            getString(R.string.permission_required),
+                            getString(R.string.ok),
+                            getString(R.string.cancel),
+                            new IAsyncCallback<Boolean>() {
+                                @Override
+                                public void handleResponse(Boolean result) {
+                                    if (result) {
+                                        ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, SurespotConstants.IntentRequestCodes.REQUEST_SELECT_IMAGE);
+                                    }
+                                }
+                            });
+                }
+            }
+            break;
+            case SurespotConstants.IntentRequestCodes.REQUEST_MICROPHONE: {
+                if (grantResults.length ==0 || ((grantResults.length > 0) && (grantResults[0] != PackageManager.PERMISSION_GRANTED)) ) {
+                    UIUtils.createAndShowConfirmationDialog(
+                            this,
+                            getString(R.string.need_mic_permission),
+                            getString(R.string.permission_required),
+                            getString(R.string.ok),
+                            getString(R.string.cancel),
+                            new IAsyncCallback<Boolean>() {
+                                @Override
+                                public void handleResponse(Boolean result) {
+                                    if (result) {
+                                        ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.RECORD_AUDIO}, SurespotConstants.IntentRequestCodes.REQUEST_MICROPHONE);
+                                    }
+                                    else {
+                                        UIUtils.createAndShowConfirmationDialog(
+                                                MainActivity.this,
+                                                getString(R.string.disable_voice_messaging_permission),
+                                                getString(R.string.pref_disable_voice),
+                                                getString(R.string.ok),
+                                                getString(R.string.cancel),
+                                                new IAsyncCallback<Boolean>() {
+                                                    @Override
+                                                    public void handleResponse(Boolean result) {
+                                                        if (result) {
+                                                            //disable voice
+                                                            Utils.putUserSharedPrefsBoolean(MainActivity.this, mUser,SurespotConstants.PrefNames.VOICE_DISABLED, true);
+                                                            setButtonText();
+                                                        }
+                                                    }
+                                                }
+                                        );
+                                    }
+                                }
+                            });
+                }
+            }
+            break;
+        }
+    }
+
+    private void captureImage() {
+        new AsyncTask<Void, Void, Void>() {
+            protected Void doInBackground(Void... params) {
+                if (mCurrentFriend == null || (mCurrentFriend != null && mCurrentFriend.isDeleted())) {
+                    return null;
+                }
+                mImageCaptureHandler = new ImageCaptureHandler(mUser, mCurrentFriend.getName());
+                mImageCaptureHandler.capture(MainActivity.this);
+                return null;
+            }
+        }.execute();
+
+    }
+
+    private void checkPermissionVoice(final Activity activity) {
+        SurespotLog.d(TAG, "checkPermissionMicrophone");
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.RECORD_AUDIO)) {
+                UIUtils.createAndShowConfirmationDialog(
+                        activity,
+                        getString(R.string.need_mic_permission),
+                        getString(R.string.permission_required),
+                        getString(R.string.ok),
+                        getString(R.string.cancel),
+                        new IAsyncCallback<Boolean>() {
+                            @Override
+                            public void handleResponse(Boolean result) {
+                                if (result) {
+                                    ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.RECORD_AUDIO}, SurespotConstants.IntentRequestCodes.REQUEST_MICROPHONE);
+                                }
+                                else {
+                                    UIUtils.createAndShowConfirmationDialog(
+                                            activity,
+                                            getString(R.string.disable_voice_messaging_permission),
+                                            getString(R.string.pref_disable_voice),
+                                            getString(R.string.ok),
+                                            getString(R.string.cancel),
+                                            new IAsyncCallback<Boolean>() {
+                                                @Override
+                                                public void handleResponse(Boolean result) {
+                                                    if (result) {
+                                                        //disable voice
+                                                        Utils.putUserSharedPrefsBoolean(MainActivity.this, mUser,SurespotConstants.PrefNames.VOICE_DISABLED, true);
+                                                        setButtonText();
+                                                    }
+                                                }
+                                            }
+                                    );
+                                }
+                            }
+                        }
+                );
+            }
+            else {
+                ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.RECORD_AUDIO}, SurespotConstants.IntentRequestCodes.REQUEST_MICROPHONE);
+            }
+        }
+        else {
+            if (mUser != null && mCurrentFriend != null) {
+                VoiceController.startRecording(MainActivity.this, mUser, mCurrentFriend.getName());
+            }
+        }
+    }
+
+    private void switchViews() {
+        int keyboardHeight = mActivityLayout.getKeyboardHeight();
+        SurespotLog.d(TAG, "switchViews, mode: %s, keyboardHeight: %d", mCurrentMessageMode, keyboardHeight);
+        mWindowLayoutParams = new WindowManager.LayoutParams();
+        mWindowLayoutParams.gravity = Gravity.BOTTOM | Gravity.LEFT;
+        mWindowLayoutParams.type = WindowManager.LayoutParams.TYPE_APPLICATION_PANEL;
+        mWindowLayoutParams.token = this.getWindow().getDecorView().getWindowToken();
+        mWindowLayoutParams.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
+        if (mWindowLayoutParams != null) {
+            mWindowLayoutParams.height = keyboardHeight;
+            mWindowLayoutParams.width = UIUtils.getDisplaySize(this).x;
+        }
+        final WindowManager wm = (WindowManager) this.getSystemService(Activity.WINDOW_SERVICE);
+        //mOldView = mMessageModeView;
         try {
-            wm.addView(mEmojiView, mWindowLayoutParams);
+            wm.addView(mMessageModeView, mWindowLayoutParams);
+            Runnable runnable3 = new Runnable() {
+                @Override
+                public void run() {
+                    if (mOldView != null && mOldView.getParent() != null && mOldView != mMessageModeView) {
+                        wm.removeView(mOldView);
+                    }
+                }
+            };
+            mHandler.post(runnable3);
         }
         catch (Exception e) {
-            SurespotLog.e(TAG, e, "error adding emoji view");
+            SurespotLog.e(TAG, e, "error adding view");
             return;
         }
 
+    }
 
-        if (!mActivityLayout.isKeyboardVisible()) {
-            SurespotLog.d(TAG, "setting padding");
-            mActivityLayout.setPadding(0, 0, 0, keyboardHeight);
-            // TODO mEmojiButton.setImageResource(R.drawable.ic_msg_panel_hide);
+    private void setGalleryMode() {
+        int keyboardHeight = mActivityLayout.getKeyboardHeight();
+        mGalleryModeHandler = new GalleryModeHandler(MainActivity.this, mUser, keyboardHeight, new IAsyncCallback<Uri>() {
+            @Override
+            public void handleResponse(final Uri uri) {
+                if (uri != null) {
+                    final ChatController cc = ChatManager.getChatController(mUser);
+                    if (cc != null) {
+
+                        SharedPreferences sp = MainActivity.this.getSharedPreferences(MainActivity.this.mUser, Context.MODE_PRIVATE);
+                        boolean confirmSend = sp.getBoolean("pref_confirm_image_send", true);
+
+                        if (confirmSend) {
+                            mDialog = UIUtils.createAndShowConfirmationDialog(MainActivity.this, getString(R.string.confirm_image_send, mCurrentFriend.getNameOrAlias()), getString(R.string.send),
+                                    getString(R.string.ok), getString(R.string.cancel), new IAsyncCallback<Boolean>() {
+                                        public void handleResponse(Boolean result) {
+                                            if (result) {
+                                                ChatUtils.uploadPictureMessageAsync(
+                                                        MainActivity.this,
+                                                        cc,
+                                                        uri,
+                                                        mUser,
+                                                        mCurrentFriend.getName(),
+                                                        true);
+                                            }
+                                        }
+                                    });
+                        }
+                        else {
+                            ChatUtils.uploadPictureMessageAsync(
+                                    MainActivity.this,
+                                    cc,
+                                    uri,
+                                    mUser,
+                                    mCurrentFriend.getName(),
+                                    true);
+                        }
+                    }
+                }
+            }
+        },
+                new IAsyncCallback<Object>() {
+
+                    @Override
+                    public void handleResponse(Object result) {
+                        final ChatController cc = ChatManager.getChatController(mUser);
+                        final String currentChat = cc.getCurrentChat();
+                        if (currentChat == null) {
+                            return;
+                        }
+                        if (currentChat == null || mCurrentFriend == null) {
+                            return;
+                        }
+
+                        // can't send images to deleted folk
+                        if (mCurrentFriend.isDeleted()) {
+                            return;
+                        }
+
+                        new AsyncTask<Void, Void, Void>() {
+                            protected Void doInBackground(Void... params) {
+                                if (mCurrentFriend == null) {
+                                    return null;
+                                }
+                                Intent intent = new Intent(MainActivity.this, ImageSelectActivity.class);
+                                intent.putExtra("to", currentChat);
+                                intent.putExtra("toAlias", mCurrentFriend.getNameOrAlias());
+                                intent.putExtra("from", mUser);
+                                intent.putExtra("size", ImageSelectActivity.IMAGE_SIZE_LARGE);
+                                // set start intent to avoid restarting every rotation
+                                intent.putExtra("start", true);
+                                intent.putExtra("friendImage", false);
+                                startActivity(intent);
+                                return null;
+                            }
+                        }.execute();
+                    }
+                }
+        );
+
+        mGalleryView = getLayoutInflater().inflate(R.layout.gallery_message_mode_view, null, false);
+        mMessageModeView = mGalleryView;
+        switchViews();
+        mGalleryModeHandler.refreshContextAndViews(this, mGalleryView);
+        updateMessageBar();
+    }
+
+    private void scanFiles(final IAsyncCallbackTuple<String, Uri> callback) {
+        callback.handleResponse(null, null);
+        return;
+//        SurespotLog.d(TAG,"scanFiles");
+//        ArrayList<String> toBeScanned = new ArrayList<String>();
+//
+//
+//        String[] scanFolders = new String[]{Environment.DIRECTORY_DOCUMENTS, Environment.DIRECTORY_DOWNLOADS, Environment.DIRECTORY_DCIM, Environment.DIRECTORY_PICTURES};
+//
+//        for (String scanFolder : scanFolders) {
+//            File f = Environment.getExternalStoragePublicDirectory(scanFolder);
+//            traverse(f, toBeScanned);
+//        }
+//
+//        //traverse(Environment.getExternalStorageDirectory(), toBeScanned);
+//
+//        //scanning files
+//        SurespotLog.d(TAG, "scanning %d files: ", toBeScanned.size());
+//        MediaScannerConnection.scanFile(this, toBeScanned.toArray(new String[]{}), null, new MediaScannerConnection.OnScanCompletedListener() {
+//            @Override
+//            public void onScanCompleted(String path, Uri uri) {
+//                SurespotLog.d(TAG, "scan completed");
+//                callback.handleResponse(path, uri);
+//            }
+//        });
+    }
+
+    public void traverse(File dir, ArrayList<String> toBeScanned) {
+        if (dir.exists()) {
+            File[] files = dir.listFiles();
+            for (int i = 0; i < files.length; ++i) {
+                File file = files[i];
+                if (file.isDirectory()) {
+                    traverse(file, toBeScanned);
+                }
+                else {
+                    // do something here with the file
+                    String path = file.getAbsolutePath();
+                    SurespotLog.d(TAG, "adding file to scanner: %s", path);
+                    //toBeScanned.add(path);
+                    MediaScannerConnection.scanFile(this, new String[]{path}, null, new MediaScannerConnection.OnScanCompletedListener() {
+                        @Override
+                        public void onScanCompleted(String path, Uri uri) {
+                            SurespotLog.d(TAG, "scan completed: %s", path);
+                            //  callback.handleResponse(path, uri);
+                        }
+                    });
+                }
+            }
+        }
+        else {
+            SurespotLog.d(TAG, "404: %s", dir);
         }
 
-        setEmojiIcon(false);
     }
 
-    private void hideEmojiDrawer() {
-        hideEmojiDrawer(true);
-    }
 
-    public void hideEmojiDrawer(boolean showKeyboard) {
+    public void disableMessageMode(boolean showKeyboard) {
+        if (mEtMessage == null) {
+            return;
+        }
+
+        mEtMessage.setVisibility(View.VISIBLE);
+        requestFocus(mEtMessage);
+
+        View gifFrame = findViewById(R.id.gifFrame);
+        gifFrame.setVisibility(GONE);
+        mGiphySearchFieldLayout.setVisibility(GONE);
+
+        mEtGifSearch.setText("");
+        mSendButton.setVisibility(View.VISIBLE);
+        mActivityLayout.findViewById(R.id.pager).setPadding(0, 0, 0, 0);
+
+
+        if (mMessageModeView != null && mMessageModeView.getParent() != null) {
+            WindowManager wm = (WindowManager) this.getSystemService(Context.WINDOW_SERVICE);
+            wm.removeViewImmediate(mMessageModeView);
+        }
+
+        mCurrentMessageMode = null;
         if (showKeyboard) {
-            InputMethodManager input = (InputMethodManager) mContext
-                    .getSystemService(Context.INPUT_METHOD_SERVICE);
-            input.showSoftInput(mEtMessage, 0);
+            Runnable runnable = new Runnable() {
+                @Override
+                public void run() {
+
+                    if (!mEtMessage.hasFocus()) {
+
+                        if (!mActivityLayout.isKeyboardVisible()) {
+                            InputMethodManager input = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+                            input.showSoftInput(mEtMessage, 0);
+                        }
+                    }
+                }
+            };
+            mHandler.post(runnable);
+
+        }
+        updateMessageBar();
+        expand();
+    }
+
+    private void sendGifMessage(String result) {
+        if (mUser == null) {
+            return;
         }
 
-        if (mEmojiView != null && mEmojiView.getParent() != null) {
-            WindowManager wm = (WindowManager) mContext
-                    .getSystemService(Context.WINDOW_SERVICE);
-            wm.removeViewImmediate(mEmojiView);
+        final ChatController cc = ChatManager.getChatController(mUser);
+        if (cc == null) {
+            return;
         }
 
-        mEmojiButton.setImageResource(R.drawable.smiley);
-        mActivityLayout.setPadding(0, 0, 0, 0);
-        mEmojiShowing = false;
+        final String currentChat = cc.getCurrentChat();
+        if (currentChat == null) {
+            return;
+        }
+
+        ChatUtils.sendGifMessage(mUser, currentChat, result);
     }
 
     @Override
@@ -2025,7 +2903,25 @@ public class MainActivity extends Activity implements EmojiconsView.OnEmojiconBa
         EmojiconsView.input(mEtMessage, emojicon);
     }
 
-    void sendBackPressed() {
-        this.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK));
+//    void sendBackPressed() {
+//        this.dispatchKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_BACK));
+//    }
+
+    void requestFocus(View view) {
+
+        if (!view.hasFocus()) {
+         //   SurespotLog.d(TAG, "requestFocus, view does not have focus, requesting focus");
+            view.requestFocus();
+        }
+        else {
+       //     SurespotLog.d(TAG, "requestFocus, view has focus, not requesting focus");
+        }
+    }
+
+    void hideKeyboard() {
+        InputMethodManager input = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
+        if (input != null && mEtMessage != null) {
+            input.hideSoftInputFromWindow(mEtMessage.getWindowToken(), 0);
+        }
     }
 }

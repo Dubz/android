@@ -11,6 +11,7 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.DialogInterface.OnClickListener;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.graphics.Bitmap;
 import android.graphics.Color;
@@ -43,20 +44,21 @@ import android.widget.RemoteViews;
 import android.widget.TextView;
 
 import com.twofours.surespot.R;
-import com.twofours.surespot.activities.MainActivity;
-import com.twofours.surespot.backup.ExportIdentityActivity;
-import com.twofours.surespot.chat.SurespotMessage;
 import com.twofours.surespot.SurespotConfiguration;
 import com.twofours.surespot.SurespotConstants;
 import com.twofours.surespot.SurespotLog;
-import com.twofours.surespot.ui.LetterOrDigitOrSpaceInputFilter;
-import com.twofours.surespot.ui.SingleProgressDialog;
+import com.twofours.surespot.activities.MainActivity;
+import com.twofours.surespot.backup.ExportIdentityActivity;
+import com.twofours.surespot.chat.SurespotMessage;
 import com.twofours.surespot.identity.KeyFingerprintDialogFragment;
 import com.twofours.surespot.network.IAsyncCallback;
 import com.twofours.surespot.network.NetworkController;
 import com.twofours.surespot.qr.QRCodeEncoder;
 import com.twofours.surespot.qr.WriterException;
+import com.twofours.surespot.ui.LetterOrDigitOrSpaceInputFilter;
+import com.twofours.surespot.ui.SingleProgressDialog;
 
+import org.json.JSONException;
 import org.json.JSONObject;
 import org.spongycastle.util.encoders.Hex;
 
@@ -84,7 +86,7 @@ public class UIUtils {
         editText.setImeOptions(EditorInfo.IME_ACTION_DONE);
         editText.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
 
-        editText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConstants.MAX_PASSWORD_LENGTH)});
+        editText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConfiguration.MAX_PASSWORD_LENGTH)});
 
         alert.setPositiveButton(R.string.ok, new OnClickListener() {
 
@@ -136,6 +138,25 @@ public class UIUtils {
                 }
             });
         }
+
+        AlertDialog dialog = builder.create();
+        dialog.show();
+
+        return dialog;
+
+    }
+
+    public static AlertDialog createAndShowOKDialog(Context context, String message, String title, final IAsyncCallback<Boolean> callback) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(context);
+        builder.setMessage(message).setTitle(title).setPositiveButton(context.getString(R.string.ok), new OnClickListener() {
+
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                if (callback != null) {
+                    callback.handleResponse(true);
+                }
+            }
+        });
 
         AlertDialog dialog = builder.create();
         dialog.show();
@@ -226,22 +247,38 @@ public class UIUtils {
             @Override
             public void onResponse(Call call, Response response) throws IOException {
                 if (response.isSuccessful()) {
+                    String responseString = response.body().string();
+                    SurespotLog.d(TAG, "getShortUrl response: %s", responseString);
                     JSONObject json = null;
                     try {
-                        json = new JSONObject(response.body().string());
-                    } catch (Exception e) {
-                        SurespotLog.i(TAG, e, "getShortUrl error");
+                        json = new JSONObject(responseString);
+                    }
+                    catch (Exception e) {
+                        SurespotLog.w(TAG, e, "getShortUrl error");
                         launchInviteApp(context, progressDialog, longUrl);
                         return;
                     }
 
-                    String sUrl = json.optString("id", null);
-                    if (!TextUtils.isEmpty(sUrl)) {
-                        launchInviteApp(context, progressDialog, sUrl);
-                    } else {
+                    try {
+                        JSONObject data = json.getJSONObject("data");
+                        String sUrl = data.optString("url", longUrl);
+                        //change to https
+                        if (!sUrl.contains("https")) {
+                            sUrl = sUrl.replace("http", "https");
+                        }
+                        if (!TextUtils.isEmpty(sUrl)) {
+                            launchInviteApp(context, progressDialog, sUrl);
+                        }
+                        else {
+                            launchInviteApp(context, progressDialog, longUrl);
+                        }
+                    }
+                    catch (JSONException e) {
                         launchInviteApp(context, progressDialog, longUrl);
                     }
-                } else {
+
+                }
+                else {
                     launchInviteApp(context, progressDialog, longUrl);
                 }
             }
@@ -262,7 +299,8 @@ public class UIUtils {
             }
 
             progressDialog.hide();
-        } catch (ActivityNotFoundException e) {
+        }
+        catch (ActivityNotFoundException e) {
             progressDialog.hide();
             Utils.makeToast(context, context.getString(R.string.invite_no_application_found));
         }
@@ -270,8 +308,9 @@ public class UIUtils {
 
     private static String buildExternalInviteUrl(String username) {
         try {
-            return "https://server.surespot.me/autoinvite/" + URLEncoder.encode(username, "UTF-8") + "/social";
-        } catch (UnsupportedEncodingException e) {
+            return "https://invite.surespot.me/autoinvite/" + URLEncoder.encode(username, "UTF-8") + "/social";
+        }
+        catch (UnsupportedEncodingException e) {
             SurespotLog.w(TAG, e, "error encoding auto invite url");
 
         }
@@ -289,8 +328,9 @@ public class UIUtils {
 
         String inviteUrl = null;
         try {
-            inviteUrl = "https://server.surespot.me/autoinvite/" + URLEncoder.encode(user, "UTF-8") + "/qr_droid";
-        } catch (UnsupportedEncodingException e) {
+            inviteUrl = "https://invite.surespot.me/autoinvite/" + URLEncoder.encode(user, "UTF-8") + "/qr_droid";
+        }
+        catch (UnsupportedEncodingException e) {
             SurespotLog.w(TAG, e, "error encoding auto invite url");
             Utils.makeLongToast(activity, activity.getString(R.string.invite_no_application_found));
             return null;
@@ -303,7 +343,8 @@ public class UIUtils {
         try {
             bitmap = QRCodeEncoder.encodeAsBitmap(inviteUrl, SurespotConfiguration.getQRDisplaySize());
             ivQr.setImageBitmap(bitmap);
-        } catch (WriterException e) {
+        }
+        catch (WriterException e) {
             SurespotLog.w(TAG, e, "generate invite QR");
             return null;
 
@@ -385,7 +426,8 @@ public class UIUtils {
 
             // Create Hex String
             return new String(Hex.encode(messageDigest));
-        } catch (NoSuchAlgorithmException e) {
+        }
+        catch (NoSuchAlgorithmException e) {
             SurespotLog.i(TAG, e, "md5");
         }
         return "";
@@ -404,23 +446,33 @@ public class UIUtils {
     }
 
     public static void updateDateAndSize(Context context, SurespotMessage message, View parentView) {
+        SurespotLog.v(TAG, "updateDateAndSize, message: %s", message);
         if (message.getDateTime() != null) {
             TextView tvTime = (TextView) parentView.findViewById(R.id.messageTime);
             tvTime.setText(DateFormat.getDateFormat(context).format(message.getDateTime()) + " "
                     + DateFormat.getTimeFormat(context).format(message.getDateTime()));
 
         }
-
+        TextView tvMessageSize = (TextView) parentView.findViewById(R.id.messageSize);
         if (message.getDataSize() != null && message.getDataSize() > 0) {
-            TextView voiceTime = (TextView) parentView.findViewById(R.id.messageSize);
-            voiceTime.setVisibility(View.VISIBLE);
+
+            tvMessageSize.setVisibility(View.VISIBLE);
 
             // use base 10 definition of kB: http://en.wikipedia.org/wiki/Kilobyte
             float kb = (float) message.getDataSize() / 1000;
-            voiceTime.setText(String.format("%d KB", (int) Math.ceil(kb)));
-        } else {
-            TextView voiceTime = (TextView) parentView.findViewById(R.id.messageSize);
-            voiceTime.setVisibility(View.GONE);
+            tvMessageSize.setText(String.format("%d KB", (int) Math.ceil(kb)));
+        }
+        else {
+            if (message.getFileMessageData() != null && message.getFileMessageData().getSize() > 0) {
+                tvMessageSize.setVisibility(View.VISIBLE);
+
+                // use base 10 definition of kB: http://en.wikipedia.org/wiki/Kilobyte
+                float kb = (float) message.getFileMessageData().getSize() / 1000;
+                tvMessageSize.setText(String.format("%d KB", (int) Math.ceil(kb)));
+            }
+            else {
+                tvMessageSize.setVisibility(View.GONE);
+            }
         }
     }
 
@@ -446,7 +498,8 @@ public class UIUtils {
         // use big style if supported
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN) {
             notification.contentView = contentView;
-        } else {
+        }
+        else {
             builder.setStyle(new NotificationCompat.BigTextStyle().bigText(message));
         }
 
@@ -480,28 +533,32 @@ public class UIUtils {
             case Surface.ROTATION_90:
                 if (width > height) {
                     activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
-                } else {
+                }
+                else {
                     activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT);
                 }
                 break;
             case Surface.ROTATION_180:
                 if (height > width) {
                     activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT);
-                } else {
+                }
+                else {
                     activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE);
                 }
                 break;
             case Surface.ROTATION_270:
                 if (width > height) {
                     activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE);
-                } else {
+                }
+                else {
                     activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
                 }
                 break;
             default:
                 if (height > width) {
                     activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-                } else {
+                }
+                else {
                     activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
                 }
         }
@@ -529,7 +586,7 @@ public class UIUtils {
         editText.setInputType(InputType.TYPE_CLASS_TEXT);
         editText.setText(name);
         editText.setSelection(name.length(), name.length());
-        editText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConstants.MAX_USERNAME_LENGTH), new LetterOrDigitOrSpaceInputFilter()});
+        editText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConfiguration.MAX_USERNAME_LENGTH), new LetterOrDigitOrSpaceInputFilter()});
 
         alert.setPositiveButton(R.string.ok, new OnClickListener() {
 
@@ -575,5 +632,35 @@ public class UIUtils {
         }
 
         return displaySize;
+    }
+
+    public static Display getDisplay(Context context) {
+        WindowManager manager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        return manager.getDefaultDisplay();
+
+    }
+
+    private static double mDensity = 0.0;
+
+    public static double dpFromPx(final Context context, final float px) {
+        //cache the density
+        if (mDensity == 0) {
+            mDensity = context.getResources().getDisplayMetrics().density;
+        }
+
+        return px / mDensity;
+    }
+
+    public static double pxFromDp(final Context context, final float dp) {
+        //cache the density
+        if (mDensity == 0) {
+            mDensity = context.getResources().getDisplayMetrics().density;
+        }
+        return dp * mDensity;
+    }
+
+    public static boolean isDarkTheme(Context context) {
+        SharedPreferences settings = context.getSharedPreferences("surespot_preferences", android.content.Context.MODE_PRIVATE);
+        return settings.getBoolean("pref_black", false);
     }
 }

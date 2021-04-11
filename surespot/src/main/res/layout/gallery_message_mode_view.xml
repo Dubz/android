@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+             android:layout_width="match_parent"
+             android:layout_height="match_parent"
+             xmlns:app="http://schemas.android.com/apk/res-auto"
+    >
+
+    <ProgressBar
+        android:id="@+id/gallery_progress_bar"
+        style="?android:progressBarStyle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:visibility="gone"
+        />
+
+
+    <android.support.v7.widget.RecyclerView
+        android:scrollbars="horizontal"
+        android:id="@+id/rvGallery"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal"
+        />
+
+    <TextView
+        android:id="@+id/tv_no_images"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:text="@string/no_GIFS_found"
+        android:visibility="gone"
+        />
+
+    <com.twofours.surespot.ui.TintableImageView
+        android:id="@+id/launch_gallery"
+        android:layout_width="50dp"
+        android:layout_height="50dp"
+        android:padding="8dp"
+        android:clickable="true"
+        android:layout_gravity="bottom|right"
+        android:layout_marginBottom="21dp"
+        android:layout_marginRight="20dp"
+        android:background="@drawable/filled_black_circle_grey_border"
+        android:src="@drawable/elipsis"
+        android:scaleType="centerInside"/>
+</FrameLayout>

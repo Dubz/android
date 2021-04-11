@@ -1,13 +1,16 @@
 package com.twofours.surespot.chat;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.text.TextUtils;
 import android.text.format.DateFormat;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.BaseAdapter;
+import android.widget.Button;
 import android.widget.ImageView;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -17,18 +20,27 @@ import com.twofours.surespot.SurespotApplication;
 import com.twofours.surespot.SurespotConfiguration;
 import com.twofours.surespot.SurespotConstants;
 import com.twofours.surespot.SurespotLog;
-import com.twofours.surespot.encryption.MessageDecryptor;
+import com.twofours.surespot.filetransfer.FileMessageDecryptor;
+import com.twofours.surespot.filetransfer.FileTransferManager;
+import com.twofours.surespot.gifs.GifMessageDownloader;
 import com.twofours.surespot.images.MessageImageDownloader;
 import com.twofours.surespot.network.IAsyncCallback;
+import com.twofours.surespot.utils.ChatUtils;
+import com.twofours.surespot.utils.PBFileUtils;
+import com.twofours.surespot.utils.UIUtils;
+import com.twofours.surespot.utils.Utils;
 import com.twofours.surespot.voice.VoiceController;
 import com.twofours.surespot.voice.VoiceMessageDownloader;
 
+import java.io.File;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.ListIterator;
 import java.util.concurrent.CopyOnWriteArrayList;
+
+import pl.droidsonroids.gif.GifImageView;
 
 public class ChatAdapter extends BaseAdapter {
     private String TAG = "ChatAdapter";
@@ -41,13 +53,19 @@ public class ChatAdapter extends BaseAdapter {
     private boolean mCheckingSequence;
     private boolean mDebugMode;
     private int mCurrentScrollPositionId = -1;
-    private MessageDecryptor mMessageDecryptor;
-    private MessageImageDownloader mMessageImageDownloader;
+
     private boolean mLoaded;
-    private VoiceMessageDownloader mMessageVoiceDownloader;
+
     private CopyOnWriteArrayList<SurespotControlMessage> mControlMessages = new CopyOnWriteArrayList<>();
     private String mOurUsername;
+
     private int mSelectedTop;
+
+    private MessageDecryptor mMessageDecryptor;
+    private MessageImageDownloader mMessageImageDownloader;
+    private VoiceMessageDownloader mMessageVoiceDownloader;
+    private GifMessageDownloader mGifDownloader;
+    private FileMessageDecryptor mFileMessageDecryptor;
 
     public ChatAdapter(Context context, String ourUsername, String theirUsername) {
         TAG = String.format("ChatAdapter:%s:%s", ourUsername, theirUsername);
@@ -58,9 +76,11 @@ public class ChatAdapter extends BaseAdapter {
         SharedPreferences pm = context.getSharedPreferences(mOurUsername, Context.MODE_PRIVATE);
         mDebugMode = pm.getBoolean("pref_debug_mode", false);
 
-        mMessageDecryptor = new MessageDecryptor(mOurUsername, this);
-        mMessageImageDownloader = new MessageImageDownloader(mOurUsername, this);
-        mMessageVoiceDownloader = new VoiceMessageDownloader(mOurUsername, this);
+        mMessageDecryptor = new MessageDecryptor(context, mOurUsername, this);
+        mMessageImageDownloader = new MessageImageDownloader(context, mOurUsername, this);
+        mMessageVoiceDownloader = new VoiceMessageDownloader(context, mOurUsername, this);
+        mGifDownloader = new GifMessageDownloader(context, ourUsername, this);
+        mFileMessageDecryptor = new FileMessageDecryptor(context, ourUsername, this);
     }
 
     public void doneCheckingSequence() {
@@ -132,8 +152,8 @@ public class ChatAdapter extends BaseAdapter {
             SurespotMessage updateMessage = mMessages.get(index);
 
             if (updateMessage != null) {
-                //        SurespotLog.v(TAG, "updating message: %s", updateMessage);
-                //        SurespotLog.v(TAG, "new message: %s", message);
+                SurespotLog.v(TAG, "updating message: %s", updateMessage);
+                SurespotLog.v(TAG, "new message: %s", message);
 
                 // don't update unless we have an id
                 if (message.getId() != null) {
@@ -152,6 +172,21 @@ public class ChatAdapter extends BaseAdapter {
                     }
                     if (message.getDataSize() != null) {
                         updateMessage.setDataSize(message.getDataSize());
+                    }
+
+                    if (message.getFileMessageData() != null) {
+                        if (message.getFileMessageData().getSize() > 0) {
+                            updateMessage.getFileMessageData().setSize(message.getFileMessageData().getSize());
+                        }
+                        if (message.getFileMessageData().getMimeType() != null) {
+                            updateMessage.getFileMessageData().setMimeType(message.getFileMessageData().getMimeType());
+                        }
+                        if (message.getFileMessageData().getCloudUrl() != null) {
+                            updateMessage.getFileMessageData().setCloudUrl(message.getFileMessageData().getCloudUrl());
+                        }
+                        if (message.getFileMessageData().getFilename() != null) {
+                            updateMessage.getFileMessageData().setFilename(message.getFileMessageData().getFilename());
+                        }
                     }
 
                     // clear error status
@@ -311,7 +346,7 @@ public class ChatAdapter extends BaseAdapter {
 
             chatMessageViewHolder.tvTime = (TextView) convertView.findViewById(R.id.messageTime);
             chatMessageViewHolder.tvText = (TextView) convertView.findViewById(R.id.messageText);
-            chatMessageViewHolder.imageView = (ImageView) convertView.findViewById(R.id.messageImage);
+            chatMessageViewHolder.imageView = (GifImageView) convertView.findViewById(R.id.messageImage);
             chatMessageViewHolder.imageView.getLayoutParams().height = SurespotConfiguration.getImageDisplayHeight();
             chatMessageViewHolder.voiceView = convertView.findViewById(R.id.messageVoice);
             chatMessageViewHolder.ivNotShareable = (ImageView) convertView.findViewById(R.id.messageImageNotShareable);
@@ -322,10 +357,22 @@ public class ChatAdapter extends BaseAdapter {
             chatMessageViewHolder.voicePlayed = (ImageView) convertView.findViewById(R.id.voicePlayed);
             chatMessageViewHolder.voiceStop = (ImageView) convertView.findViewById(R.id.voiceStop);
 
+            chatMessageViewHolder.mFileDownloadButton = (Button) convertView.findViewById(R.id.fileDownload);
+            chatMessageViewHolder.mFileDownloadButton.setTag("download");
+            chatMessageViewHolder.mFileDownloadButton.setOnClickListener(FileClickListener);
+            chatMessageViewHolder.mFilename = (TextView) convertView.findViewById(R.id.fileFilename);
+            chatMessageViewHolder.mFileOpenButton = (Button) convertView.findViewById(R.id.fileOpen);
+            chatMessageViewHolder.mFileOpenButton.setTag("open");
+            chatMessageViewHolder.mFileOpenButton.setOnClickListener(FileClickListener);
+            chatMessageViewHolder.mFileView = convertView.findViewById(R.id.fileLayout);
+
+
+            chatMessageViewHolder.tvToVersion = (TextView) convertView.findViewById(R.id.messageToVersion);
+            chatMessageViewHolder.tvFromVersion = (TextView) convertView.findViewById(R.id.messageFromVersion);
+
             if (mDebugMode) {
                 chatMessageViewHolder.tvId = (TextView) convertView.findViewById(R.id.messageId);
-                chatMessageViewHolder.tvToVersion = (TextView) convertView.findViewById(R.id.messageToVersion);
-                chatMessageViewHolder.tvFromVersion = (TextView) convertView.findViewById(R.id.messageFromVersion);
+
                 chatMessageViewHolder.tvIv = (TextView) convertView.findViewById(R.id.messageIv);
                 chatMessageViewHolder.tvData = (TextView) convertView.findViewById(R.id.messageData);
                 chatMessageViewHolder.tvMimeType = (TextView) convertView.findViewById(R.id.messageMimeType);
@@ -366,7 +413,7 @@ public class ChatAdapter extends BaseAdapter {
 //                }
             }
             else {
-                if (item.getPlainData() == null && item.getPlainBinaryData() == null) {
+                if (item.getPlainData() == null && item.getPlainBinaryData() == null && item.getFileMessageData() == null) {
                     chatMessageViewHolder.tvTime.setText(R.string.message_loading_and_decrypting);
                 }
                 else {
@@ -383,32 +430,39 @@ public class ChatAdapter extends BaseAdapter {
             }
         }
 
-        if (item.getMimeType().equals(SurespotConstants.MimeTypes.TEXT) || item.getMimeType().equals(SurespotConstants.MimeTypes.GIF_LINK)) {
-            chatMessageViewHolder.tvText.setVisibility(View.VISIBLE);
 
-            chatMessageViewHolder.voiceView.setVisibility(View.GONE);
-            chatMessageViewHolder.messageSize.setVisibility(View.GONE);
-            chatMessageViewHolder.imageView.setVisibility(View.GONE);
-            chatMessageViewHolder.imageView.clearAnimation();
-            chatMessageViewHolder.imageView.setImageBitmap(null);
-            if (item.getPlainData() != null) {
-                chatMessageViewHolder.tvText.clearAnimation();
-                chatMessageViewHolder.tvText.setText(item.getPlainData());
-            }
-            else {
-                chatMessageViewHolder.tvText.setText("");
-                mMessageDecryptor.decrypt(chatMessageViewHolder.tvText, item);
-            }
-            chatMessageViewHolder.ivNotShareable.setVisibility(View.GONE);
-            chatMessageViewHolder.ivShareable.setVisibility(View.GONE);
-        }
-        else {
-            if (item.getMimeType().equals(SurespotConstants.MimeTypes.IMAGE)) {
+        switch (item.getMimeType()) {
+
+            case SurespotConstants.MimeTypes.TEXT:
+
+                chatMessageViewHolder.tvText.setVisibility(View.VISIBLE);
+                chatMessageViewHolder.imageView.setVisibility(View.GONE);
+                chatMessageViewHolder.voiceView.setVisibility(View.GONE);
+                chatMessageViewHolder.messageSize.setVisibility(View.GONE);
+                chatMessageViewHolder.mFileView.setVisibility(View.GONE);
+
+                chatMessageViewHolder.imageView.clearAnimation();
+                chatMessageViewHolder.imageView.setImageBitmap(null);
+                if (item.getPlainData() != null) {
+                    chatMessageViewHolder.tvText.clearAnimation();
+                    chatMessageViewHolder.tvText.setText(item.getPlainData());
+                }
+                else {
+                    chatMessageViewHolder.tvText.setText("");
+                    mMessageDecryptor.decrypt(chatMessageViewHolder.tvText, item);
+                }
+                chatMessageViewHolder.ivNotShareable.setVisibility(View.GONE);
+                chatMessageViewHolder.ivShareable.setVisibility(View.GONE);
+                break;
+            case SurespotConstants.MimeTypes.IMAGE:
+                chatMessageViewHolder.tvText.setVisibility(View.GONE);
                 chatMessageViewHolder.imageView.setVisibility(View.VISIBLE);
                 chatMessageViewHolder.voiceView.setVisibility(View.GONE);
                 chatMessageViewHolder.messageSize.setVisibility(View.GONE);
-                chatMessageViewHolder.tvText.clearAnimation();
-                chatMessageViewHolder.tvText.setVisibility(View.GONE);
+                chatMessageViewHolder.mFileView.setVisibility(View.GONE);
+
+                //chatMessageViewHolder.tvText.clearAnimation();
+
                 chatMessageViewHolder.tvText.setText("");
                 if (!TextUtils.isEmpty(item.getData()) || !TextUtils.isEmpty(item.getPlainData())) {
                     mMessageImageDownloader.download(chatMessageViewHolder.imageView, item);
@@ -423,42 +477,101 @@ public class ChatAdapter extends BaseAdapter {
                     chatMessageViewHolder.ivNotShareable.setVisibility(View.VISIBLE);
                     chatMessageViewHolder.ivShareable.setVisibility(View.GONE);
                 }
-            }
-            else {
-                if (item.getMimeType().equals(SurespotConstants.MimeTypes.M4A)) {
-                    chatMessageViewHolder.imageView.setVisibility(View.GONE);
-                    chatMessageViewHolder.voiceView.setVisibility(View.VISIBLE);
-                    chatMessageViewHolder.messageSize.setVisibility(View.GONE);
 
-                    if (type == TYPE_US) {
-                        chatMessageViewHolder.voicePlayed.setVisibility(View.VISIBLE);
-                    }
-                    // //if it's ours we don't care if it's been played or not
-                    else {
+                break;
+            case SurespotConstants.MimeTypes.M4A:
+                chatMessageViewHolder.imageView.setVisibility(View.GONE);
+                chatMessageViewHolder.voiceView.setVisibility(View.VISIBLE);
+                chatMessageViewHolder.messageSize.setVisibility(View.GONE);
+                chatMessageViewHolder.mFileView.setVisibility(View.GONE);
 
-                        if (item.isVoicePlayed()) {
-                            SurespotLog.v(TAG, "chatAdapter setting played to visible");
-                            chatMessageViewHolder.voicePlayed.setVisibility(View.VISIBLE);
-                            chatMessageViewHolder.voicePlay.setVisibility(View.GONE);
-                        }
-                        else {
-                            SurespotLog.v(TAG, "chatAdapter setting played to gone");
-                            chatMessageViewHolder.voicePlayed.setVisibility(View.GONE);
-                            chatMessageViewHolder.voicePlay.setVisibility(View.VISIBLE);
-                        }
-                    }
-                    chatMessageViewHolder.voiceStop.setVisibility(View.GONE);
-                    chatMessageViewHolder.tvText.clearAnimation();
-                    chatMessageViewHolder.tvText.setVisibility(View.GONE);
-                    chatMessageViewHolder.tvText.setText("");
-                    chatMessageViewHolder.ivNotShareable.setVisibility(View.GONE);
-                    chatMessageViewHolder.ivShareable.setVisibility(View.GONE);
-
-                    mMessageVoiceDownloader.download(convertView, item);
-                    chatMessageViewHolder.voiceSeekBar.setTag(R.id.tagMessage, new WeakReference<SurespotMessage>(item));
-                    VoiceController.attach(chatMessageViewHolder.voiceSeekBar);
+                if (type == TYPE_US) {
+                    chatMessageViewHolder.voicePlayed.setVisibility(View.VISIBLE);
                 }
-            }
+                else {
+                    if (item.isVoicePlayed()) {
+                        SurespotLog.v(TAG, "chatAdapter setting played to visible");
+                        chatMessageViewHolder.voicePlayed.setVisibility(View.VISIBLE);
+                        chatMessageViewHolder.voicePlay.setVisibility(View.GONE);
+                    }
+                    else {
+                        SurespotLog.v(TAG, "chatAdapter setting played to gone");
+                        chatMessageViewHolder.voicePlayed.setVisibility(View.GONE);
+                        chatMessageViewHolder.voicePlay.setVisibility(View.VISIBLE);
+                    }
+                }
+                chatMessageViewHolder.voiceStop.setVisibility(View.GONE);
+                //chatMessageViewHolder.tvText.clearAnimation();
+                //chatMessageViewHolder.imageView.clearAnimation();
+                chatMessageViewHolder.tvText.setVisibility(View.GONE);
+                chatMessageViewHolder.tvText.setText("");
+                chatMessageViewHolder.ivNotShareable.setVisibility(View.GONE);
+                chatMessageViewHolder.ivShareable.setVisibility(View.GONE);
+
+                mMessageVoiceDownloader.download(convertView, item);
+                chatMessageViewHolder.voiceSeekBar.setTag(R.id.tagMessage, new WeakReference<SurespotMessage>(item));
+                VoiceController.attach(chatMessageViewHolder.voiceSeekBar);
+                break;
+
+            case SurespotConstants.MimeTypes.GIF_LINK:
+                if (type == TYPE_US) {
+                    item.setDownloadGif(true);
+                }
+
+                if (!item.isDownloadGif()) {
+                    boolean downloadGifs = Utils.getUserSharedPrefsBoolean(mContext, mOurUsername, "pref_download_gifs");
+                    if (!downloadGifs) {
+                        chatMessageViewHolder.imageView.setScaleType(ImageView.ScaleType.CENTER);
+                        chatMessageViewHolder.imageView.setImageResource(UIUtils.isDarkTheme(mContext) ? R.drawable.play_circle_outline_light : R.drawable.play_circle_outline_dark);
+                    }
+                    else {
+                        item.setDownloadGif(true);
+                    }
+                }
+
+                chatMessageViewHolder.imageView.setVisibility(View.VISIBLE);
+                chatMessageViewHolder.voiceView.setVisibility(View.GONE);
+                chatMessageViewHolder.messageSize.setVisibility(View.GONE);
+                chatMessageViewHolder.mFileView.setVisibility(View.GONE);
+                //chatMessageViewHolder.tvText.clearAnimation();
+
+                chatMessageViewHolder.tvText.setVisibility(View.GONE);
+                chatMessageViewHolder.tvText.setText("");
+                if (!TextUtils.isEmpty(item.getData()) || !TextUtils.isEmpty(item.getPlainData())) {
+                    mGifDownloader.download(chatMessageViewHolder.imageView, item);
+                }
+
+                chatMessageViewHolder.ivNotShareable.setVisibility(View.GONE);
+                chatMessageViewHolder.ivShareable.setVisibility(View.GONE);
+
+                //won't be decrypted until they click on it if they don't have auto download enabled so set date/time here if we have it
+                if (item.getDateTime() != null) {
+                    chatMessageViewHolder.tvTime.setText(DateFormat.getDateFormat(mContext).format(item.getDateTime()) + " "
+                            + DateFormat.getTimeFormat(mContext).format(item.getDateTime()));
+                }
+                break;
+            case SurespotConstants.MimeTypes.FILE:
+
+                chatMessageViewHolder.tvText.setVisibility(View.VISIBLE);
+                chatMessageViewHolder.imageView.setVisibility(View.GONE);
+                chatMessageViewHolder.voiceView.setVisibility(View.GONE);
+                chatMessageViewHolder.messageSize.setVisibility(View.GONE);
+                chatMessageViewHolder.mFileView.setVisibility(View.GONE);
+                chatMessageViewHolder.imageView.clearAnimation();
+                chatMessageViewHolder.imageView.setImageBitmap(null);
+                chatMessageViewHolder.ivNotShareable.setVisibility(View.GONE);
+                chatMessageViewHolder.ivShareable.setVisibility(View.GONE);
+                chatMessageViewHolder.tvText.setText(mContext.getString(R.string.upgrade_for_files));
+                if (item.getDateTime() != null) {
+                    chatMessageViewHolder.tvTime.setText(DateFormat.getDateFormat(mContext).format(item.getDateTime()) + " "
+                            + DateFormat.getTimeFormat(mContext).format(item.getDateTime()));
+                }
+                else {
+                    chatMessageViewHolder.tvTime.setText("");
+                    SurespotLog.v(TAG, "getView, item: %s", item);
+                }
+                break;
+
         }
 
         if (type == TYPE_US) {
@@ -466,17 +579,19 @@ public class ChatAdapter extends BaseAdapter {
             chatMessageViewHolder.vMessageSent.setVisibility(item.getId() != null ? View.VISIBLE : View.GONE);
         }
 
+//        chatMessageViewHolder.tvToVersion.setVisibility(View.VISIBLE);
+//        chatMessageViewHolder.tvFromVersion.setVisibility(View.VISIBLE);
+//        chatMessageViewHolder.tvToVersion.setText(item.getToVersion());
+//        chatMessageViewHolder.tvFromVersion.setText(item.getFromVersion());
+
+
         if (mDebugMode) {
             chatMessageViewHolder.tvId.setVisibility(View.VISIBLE);
-            chatMessageViewHolder.tvToVersion.setVisibility(View.VISIBLE);
-            chatMessageViewHolder.tvFromVersion.setVisibility(View.VISIBLE);
             chatMessageViewHolder.tvIv.setVisibility(View.VISIBLE);
             chatMessageViewHolder.tvData.setVisibility(View.VISIBLE);
             chatMessageViewHolder.tvMimeType.setVisibility(View.VISIBLE);
 
             chatMessageViewHolder.tvId.setText("id: " + item.getId());
-            chatMessageViewHolder.tvToVersion.setText("toVersion: " + item.getToVersion());
-            chatMessageViewHolder.tvFromVersion.setText("fromVersion: " + item.getFromVersion());
             chatMessageViewHolder.tvIv.setText("iv: " + item.getIv());
             chatMessageViewHolder.tvData.setText("data: " + item.getData());
             chatMessageViewHolder.tvMimeType.setText("mimeType: " + item.getMimeType());
@@ -490,7 +605,7 @@ public class ChatAdapter extends BaseAdapter {
         public TextView tvUser;
         public View vMessageSending;
         public View vMessageSent;
-        public ImageView imageView;
+        public GifImageView imageView;
         public TextView tvTime;
         public TextView tvId;
         public TextView tvToVersion;
@@ -508,7 +623,67 @@ public class ChatAdapter extends BaseAdapter {
         public ImageView voicePlay;
         public ImageView voiceStop;
 
+
+        public View mFileView;
+        public TextView mFilename;
+        public TextView mFilesize;
+        public Button mFileOpenButton;
+        public Button mFileDownloadButton;
     }
+
+    private View.OnClickListener FileClickListener = new View.OnClickListener() {
+        @Override
+        public void onClick(final View v) {
+            final String iv = ((View) v.getParent()).getTag().toString();
+            final SurespotMessage message = getMessageByIv(iv);
+
+            if (v.getTag().equals("download")) {
+                SurespotLog.d(TAG, "FileClickListener, downloading file message: %s", message);
+                FileTransferManager.download(mContext, mOurUsername, message, new IAsyncCallback<String>() {
+
+                    @Override
+                    public void handleResponse(String uri) {
+                        SurespotMessage sm = getMessageByIv(iv);
+                        if (sm != null) {
+                            SurespotMessage.FileMessageData fmd = sm.getFileMessageData();
+                            if (fmd != null) {
+                                fmd.setLocalUri(uri);
+                                v.post(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        notifyDataSetChanged();
+                                    }
+                                });
+
+                            }
+                        }
+                    }
+                });
+            }
+
+            if (v.getTag().equals("open")) {
+                SurespotMessage.FileMessageData fmd = message.getFileMessageData();
+
+                if (fmd != null) {
+                    SurespotLog.d(TAG, "Opening file message, data: %s", fmd);
+                    String path = fmd.getLocalUri();
+
+
+                    if (path != null) {
+                        Uri uri = Uri.parse(path);
+                        File file = PBFileUtils.getFile(mContext, uri);
+                        SurespotLog.d(TAG, "Opening from file, uri: %s, file: %s", uri, file);
+
+                        Intent i = new Intent();
+                        i.setAction(android.content.Intent.ACTION_VIEW);
+                        i.setDataAndType(Uri.fromFile(file), fmd.getMimeType());
+                        mContext.startActivity(i);
+                    }
+                }
+            }
+        }
+
+    };
 
     public boolean addOrUpdateMessage(SurespotMessage message, boolean checkSequence, boolean sort, boolean notify) {
         boolean added = addOrUpdateMessage(message, checkSequence, sort);

@@ -11,6 +11,7 @@ import android.content.pm.PackageManager;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.support.v4.app.ActivityCompat;
+import android.support.v4.content.ContextCompat;
 import android.text.TextUtils;
 import android.text.format.DateFormat;
 import android.view.MenuItem;
@@ -32,10 +33,10 @@ import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecovera
 import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.client.util.DateTime;
 import com.google.api.services.drive.Drive;
-import com.google.api.services.drive.model.ChildList;
-import com.google.api.services.drive.model.ChildReference;
+import com.google.api.services.drive.model.File;
 import com.google.api.services.drive.model.FileList;
 import com.twofours.surespot.R;
+import com.twofours.surespot.SurespotConfiguration;
 import com.twofours.surespot.SurespotConstants;
 import com.twofours.surespot.SurespotLog;
 import com.twofours.surespot.activities.MainActivity;
@@ -47,7 +48,6 @@ import com.twofours.surespot.utils.FileUtils;
 import com.twofours.surespot.utils.UIUtils;
 import com.twofours.surespot.utils.Utils;
 
-import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -117,7 +117,7 @@ public class ImportIdentityActivity extends Activity {
 
             @Override
             public void onClick(View v) {
-                chooseAccount(true);
+                checkPermissionGetAccounts(ImportIdentityActivity.this, true);
             }
         });
 
@@ -133,8 +133,7 @@ public class ImportIdentityActivity extends Activity {
                     return;
                 }
 
-                @SuppressWarnings("unchecked")
-                final Map<String, String> map = (Map<String, String>) mDriveAdapter.getItem(position);
+                @SuppressWarnings("unchecked") final Map<String, String> map = (Map<String, String>) mDriveAdapter.getItem(position);
 
                 final String user = map.get("name");
 
@@ -159,13 +158,13 @@ public class ImportIdentityActivity extends Activity {
                                     }
                                     mSpd.show();
 
-                                    final String url = map.get("url");
+                                    final String id = map.get("id");
 
                                     new AsyncTask<Void, Void, Void>() {
 
                                         @Override
                                         protected Void doInBackground(Void... params) {
-                                            byte[] identityBytes = mDriveHelper.getFileContent(url);
+                                            byte[] identityBytes = mDriveHelper.getFileContent(id);
                                             identityBytes = FileUtils.gunzipIfNecessary(identityBytes);
 
                                             IdentityController.importIdentityBytes(ImportIdentityActivity.this, user, password, identityBytes,
@@ -288,7 +287,7 @@ public class ImportIdentityActivity extends Activity {
                                         }
                                     }
                                     else {
-                                        chooseAccount(false);
+                                        checkPermissionGetAccounts(ImportIdentityActivity.this, false);
                                     }
                                 }
 
@@ -326,9 +325,7 @@ public class ImportIdentityActivity extends Activity {
                     return null;
                 }
             }.execute();
-
         }
-
     }
 
     private void setupLocal() {
@@ -336,33 +333,42 @@ public class ImportIdentityActivity extends Activity {
         ListView lvIdentities = (ListView) findViewById(R.id.lvLocalIdentities);
         lvIdentities.setEmptyView(findViewById(R.id.no_local_identities));
 
-        List<HashMap<String, String>> items = new ArrayList<HashMap<String, String>>();
-
         // query the filesystem for identities
-        final File exportDir = FileUtils.getIdentityExportDir();
+        final java.io.File exportDir = FileUtils.getIdentityExportDir();
         SurespotLog.d(TAG, "exportDir: %s", exportDir.getAbsolutePath());
-        File[] files = IdentityController.getExportIdentityFiles(this, exportDir.getPath());
+        java.io.File[] files = IdentityController.getExportIdentityFiles(this, exportDir.getPath());
+
         SurespotLog.d(TAG, "files: %s", Arrays.toString(files));
         TextView tvLocalLocation = (TextView) findViewById(R.id.restoreLocalLocation);
 
+        List<HashMap<String, String>> items = new ArrayList<HashMap<String, String>>();
         if (files != null) {
-            TreeMap<Long, File> sortedFiles = new TreeMap<Long, File>(new Comparator<Long>() {
-                public int compare(Long o1, Long o2) {
-                    return o2.compareTo(o1);
+            Arrays.sort(files, new Comparator() {
+
+                public int compare(Object o1, Object o2) {
+                    Long x1 = ((java.io.File) o1).lastModified();
+                    Long x2 = ((java.io.File) o2).lastModified();
+
+                    int sComp = x2.compareTo(x1);
+
+                    if (sComp != 0) {
+                        return sComp;
+                    }
+
+                    String s1 = ((java.io.File) o1).getName();
+                    String s2 = ((java.io.File) o2).getName();
+                    return s1.compareTo(s2);
                 }
             });
 
-            for (File file : files) {
-                sortedFiles.put(file.lastModified(), file);
-            }
-
-            for (File file : sortedFiles.values()) {
-                long lastModTime = file.lastModified();
-                String date = DateFormat.getDateFormat(this).format(lastModTime) + " " + DateFormat.getTimeFormat(this).format(lastModTime);
+            for (java.io.File file : files) {
+                long modTime = file.lastModified();
+                String date = DateFormat.getDateFormat(this).format(modTime) + " " + DateFormat.getTimeFormat(this).format(modTime);
 
                 HashMap<String, String> map = new HashMap<String, String>();
                 map.put("name", IdentityController.getIdentityNameFromFile(file));
                 map.put("date", date);
+
                 items.add(map);
             }
         }
@@ -453,35 +459,121 @@ public class ImportIdentityActivity extends Activity {
         });
     }
 
-    public void checkPermissionReadStorage(Activity activity) {
+    private void checkPermissionReadStorage(final Activity activity) {
         SurespotLog.d(TAG, "checkPermissionReadStorage");
-//        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-//            ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, SurespotConstants.IntentRequestCodes.READ_EXTERNAL_STORAGE);
-//        }
-//        else {
-        setupLocal();
-        //}
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.READ_EXTERNAL_STORAGE)) {
+                UIUtils.createAndShowConfirmationDialog(
+                        activity,
+                        getString(R.string.need_storage_permission),
+                        getString(R.string.permission_required),
+                        getString(R.string.ok),
+                        getString(R.string.cancel),
+                        new IAsyncCallback<Boolean>() {
+                            @Override
+                            public void handleResponse(Boolean result) {
+                                if (result) {
+                                    ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, SurespotConstants.IntentRequestCodes.READ_EXTERNAL_STORAGE);
+                                }
+                            }
+                        }
+                );
+            }
+            else {
+                ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, SurespotConstants.IntentRequestCodes.READ_EXTERNAL_STORAGE);
+            }
+        }
+        else {
+            setupLocal();
+        }
     }
+
+    private void checkPermissionGetAccounts(final Activity activity, boolean ask) {
+        SurespotLog.d(TAG, "checkPermissionGetAccounts");
+        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.GET_ACCOUNTS) != PackageManager.PERMISSION_GRANTED) {
+            if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.GET_ACCOUNTS)) {
+                UIUtils.createAndShowConfirmationDialog(
+                        activity,
+                        getString(R.string.need_contacts_permission),
+                        getString(R.string.permission_required),
+                        getString(R.string.ok),
+                        getString(R.string.cancel),
+                        new IAsyncCallback<Boolean>() {
+                            @Override
+                            public void handleResponse(Boolean result) {
+                                if (result) {
+                                    ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.GET_ACCOUNTS}, SurespotConstants.IntentRequestCodes.REQUEST_GET_ACCOUNTS);
+                                }
+                            }
+                        }
+                );
+            }
+            else {
+                ActivityCompat.requestPermissions(activity, new String[]{Manifest.permission.GET_ACCOUNTS}, SurespotConstants.IntentRequestCodes.REQUEST_GET_ACCOUNTS);
+            }
+        }
+        else {
+            chooseAccount(ask);
+        }
+    }
+
 
     @Override
     public void onRequestPermissionsResult(int requestCode,
                                            String permissions[], int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         switch (requestCode) {
+            case SurespotConstants.IntentRequestCodes.REQUEST_GET_ACCOUNTS: {
+                if ((grantResults.length > 0) && (grantResults[0] == PackageManager.PERMISSION_GRANTED)) {
+                    chooseAccount(false);
+                }
+                else {
+                    UIUtils.createAndShowConfirmationDialog(
+                            this,
+                            getString(R.string.need_contacts_permission),
+                            getString(R.string.permission_required),
+                            getString(R.string.ok),
+                            getString(R.string.cancel),
+                            new IAsyncCallback<Boolean>() {
+                                @Override
+                                public void handleResponse(Boolean result) {
+                                    if (result) {
+                                        ActivityCompat.requestPermissions(ImportIdentityActivity.this, new String[]{Manifest.permission.GET_ACCOUNTS}, SurespotConstants.IntentRequestCodes.REQUEST_GET_ACCOUNTS);
+                                    }
+                                }
+                            });
+                }
+            }
+            break;
             case SurespotConstants.IntentRequestCodes.READ_EXTERNAL_STORAGE: {
                 //premission to read storage
-                if (grantResults.length > 0) {
-                    if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                        setupLocal();
-                    }
-                    else if (grantResults[0] == PackageManager.PERMISSION_DENIED) {
-                        if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.READ_EXTERNAL_STORAGE)) {
-                            Utils.makeLongToast(this, getString(R.string.need_storage_permission));
-                        }
-                        else {
-                            //didn't want to give us permission
-                            Utils.makeLongToast(this, getString(R.string.enable_storage_permission));
-                        }
-                    }
+                if ((grantResults.length > 0) && (grantResults[0] == PackageManager.PERMISSION_GRANTED)) {
+                    setupLocal();
+                }
+                else {
+                    UIUtils.createAndShowConfirmationDialog(
+                            this,
+                            getString(R.string.need_storage_permission),
+                            getString(R.string.permission_required),
+                            getString(R.string.ok),
+                            getString(R.string.cancel),
+                            new IAsyncCallback<Boolean>() {
+                                @Override
+                                public void handleResponse(Boolean result) {
+                                    if (result) {
+                                        ActivityCompat.requestPermissions(ImportIdentityActivity.this, new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, SurespotConstants.IntentRequestCodes.READ_EXTERNAL_STORAGE);
+                                    }
+
+                                    else {
+                                        UIUtils.createAndShowOKDialog(
+                                                ImportIdentityActivity.this,
+                                                getString(R.string.enable_storage_permission),
+                                                getString(R.string.permission_required),
+                                                null
+                                        );
+                                    }
+                                }
+                            });
                 }
             }
         }
@@ -502,25 +594,28 @@ public class ImportIdentityActivity extends Activity {
         }
 
         if (mDriveHelper.getDriveAccount() == null) {
-            chooseAccount(false);
+            checkPermissionGetAccounts(this, false);
             return;
         }
 
         List<HashMap<String, String>> items = new ArrayList<HashMap<String, String>>();
         try {
-            com.google.api.services.drive.model.File file = mDriveHelper.getDriveService().files().get(mFileId).execute();
+            File file = mDriveHelper.getDriveService().files()
+                    .get(mFileId)
+                    .setFields("modifiedTime, originalFilename")
+                    .execute();
 
-            if (!file.getLabels().getTrashed()) {
+            if (file != null && (file.getTrashed() == null || !file.getTrashed())) {
 
-                DateTime lastModTime = file.getModifiedDate();
+                DateTime lastModTime = file.getModifiedTime();
 
                 String date = DateFormat.getDateFormat(this).format(lastModTime.getValue()) + " "
                         + DateFormat.getTimeFormat(this).format(lastModTime.getValue());
                 HashMap<String, String> map = new HashMap<String, String>();
-                String name = IdentityController.getIdentityNameFromFilename(file.getTitle());
+                String name = IdentityController.getIdentityNameFromFilename(file.getOriginalFilename());
                 map.put("name", name);
                 map.put("date", date);
-                map.put("url", file.getDownloadUrl());
+                map.put("id", mFileId);
                 items.add(map);
             }
             else {
@@ -562,22 +657,9 @@ public class ImportIdentityActivity extends Activity {
                 });
 
             }
-        }
-        catch (IOException e) {
-            SurespotLog.w(TAG, e, "could not retrieve identity from google drive");
-
-            this.runOnUiThread(new Runnable() {
-
-                @Override
-                public void run() {
-                    Utils.makeToast(ImportIdentityActivity.this, getString(R.string.could_not_import_identity));
-                }
-            });
-
-            finish();
             return;
-
         }
+
         catch (SecurityException e) {
             SurespotLog.w(TAG, e, "createDriveIdentityDirectory");
             // when key is revoked on server this happens...should return
@@ -597,6 +679,21 @@ public class ImportIdentityActivity extends Activity {
 
             finish();
             return;
+        }
+        catch (Exception e) {
+            SurespotLog.w(TAG, e, "could not retrieve identity from google drive");
+
+            this.runOnUiThread(new Runnable() {
+
+                @Override
+                public void run() {
+                    Utils.makeToast(ImportIdentityActivity.this, getString(R.string.could_not_import_identity));
+                }
+            });
+
+            finish();
+            return;
+
         }
 
         SurespotLog.v(TAG, "loaded %d identities from google drive", items.size());
@@ -620,24 +717,24 @@ public class ImportIdentityActivity extends Activity {
 
         String identityDirId = ensureDriveIdentityDirectory();
         if (identityDirId == null) {
-            if (!firstAttempt) {
+            //   if (!firstAttempt) {
 
-                this.runOnUiThread(new Runnable() {
+            this.runOnUiThread(new Runnable() {
 
-                    @Override
-                    public void run() {
-                        mSpdLoadIdentities.hide();
-                        Utils.makeToast(ImportIdentityActivity.this, getString(R.string.could_not_list_identities_from_google_drive));
-                    }
-                });
-            }
+                @Override
+                public void run() {
+                    mSpdLoadIdentities.hide();
+                    Utils.makeToast(ImportIdentityActivity.this, getString(R.string.could_not_list_identities_from_google_drive));
+                }
+            });
+            //     }
             return;
         }
 
         List<HashMap<String, String>> items = new ArrayList<HashMap<String, String>>();
         try {
             // query the drive for identities
-            ChildList fileList = getIdentityFiles(identityDirId);
+            FileList fileList = getIdentityFiles(identityDirId);
             if (fileList == null) {
                 SurespotLog.v(TAG, "no identity backup files found on google drive");
                 this.runOnUiThread(new Runnable() {
@@ -651,9 +748,9 @@ public class ImportIdentityActivity extends Activity {
 
             }
 
-            List<ChildReference> refs = fileList.getItems();
+            List<File> files = fileList.getFiles();
 
-            if (refs.size() == 0) {
+            if (files.size() == 0) {
                 SurespotLog.v(TAG, "no identity backup files found on google drive");
                 this.runOnUiThread(new Runnable() {
 
@@ -665,31 +762,27 @@ public class ImportIdentityActivity extends Activity {
                 return;
             }
 
-            if (refs.size() > 0) {
-                TreeMap<Long, com.google.api.services.drive.model.File> sortedFiles = new TreeMap<Long, com.google.api.services.drive.model.File>(
+            if (files.size() > 0) {
+                TreeMap<Long, File> sortedFiles = new TreeMap<Long, File>(
                         new Comparator<Long>() {
                             public int compare(Long o1, Long o2) {
                                 return o2.compareTo(o1);
                             }
                         });
-                for (ChildReference ref : refs) {
-                    com.google.api.services.drive.model.File file = mDriveHelper.getDriveService().files().get(ref.getId()).execute();
-
-                    if (!file.getLabels().getTrashed()) {
-                        DateTime lastModTime = file.getModifiedDate();
-                        sortedFiles.put(lastModTime.getValue(), file);
-                    }
+                for (File file : files) {
+                    DateTime lastModTime = file.getModifiedTime();
+                    sortedFiles.put(lastModTime.getValue(), file);
                 }
 
-                for (com.google.api.services.drive.model.File file : sortedFiles.values()) {
-                    DateTime lastModTime = file.getModifiedDate();
+                for (File file : sortedFiles.values()) {
+                    DateTime lastModTime = file.getModifiedTime();
                     String date = DateFormat.getDateFormat(this).format(lastModTime.getValue()) + " "
                             + DateFormat.getTimeFormat(this).format(lastModTime.getValue());
                     HashMap<String, String> map = new HashMap<String, String>();
-                    String name = IdentityController.getIdentityNameFromFilename(file.getTitle());
+                    String name = IdentityController.getIdentityNameFromFilename(file.getOriginalFilename());
                     map.put("name", name);
                     map.put("date", date);
-                    map.put("url", file.getDownloadUrl());
+                    map.put("id", file.getId());
                     items.add(map);
                 }
 
@@ -756,15 +849,12 @@ public class ImportIdentityActivity extends Activity {
 
     }
 
-    private ChildList getIdentityFiles(String identityDirId) {
-        ChildList identityFileList = null;
-        try {
-            identityFileList = mDriveHelper.getDriveService().children().list(identityDirId).execute();
-        }
-        catch (IOException e) {
-            SurespotLog.w(TAG, e, "getIdentityFiles");
-        }
-        return identityFileList;
+    private FileList getIdentityFiles(String identityDirId) throws IOException {
+        return mDriveHelper.getDriveService().files().list()
+                .setQ(String.format("trashed = false and '%s' in parents", identityDirId))
+                .setFields("files(id, modifiedTime, originalFilename)")
+                .execute();
+
     }
 
     public String ensureDriveIdentityDirectory() {
@@ -773,29 +863,25 @@ public class ImportIdentityActivity extends Activity {
             // see if identities directory exists
 
             FileList identityDir = mDriveHelper.getDriveService().files().list()
-                    .setQ("title = '" + SurespotConstants.DRIVE_IDENTITY_FOLDER + "' and trashed = false").execute();
-            List<com.google.api.services.drive.model.File> items = identityDir.getItems();
+                    .setQ("name = '" + SurespotConfiguration.DRIVE_IDENTITY_FOLDER + "' and trashed = false and mimeType='application/vnd.google-apps.folder'").execute();
+            List<File> items = identityDir.getFiles();
 
             if (items.size() > 0) {
-                for (com.google.api.services.drive.model.File file : items) {
-                    if (!file.getLabels().getTrashed()) {
-                        SurespotLog.d(TAG, "identity folder already exists");
-                        identityDirId = file.getId();
-                        break;
-                    }
-                }
+                File file = items.get(0);
+                SurespotLog.d(TAG, "identity folder already exists");
+                identityDirId = file.getId();
             }
+
             if (identityDirId == null) {
-                com.google.api.services.drive.model.File file = new com.google.api.services.drive.model.File();
-                file.setTitle(SurespotConstants.DRIVE_IDENTITY_FOLDER);
+
+                File file = new File();
+                file.setName(SurespotConfiguration.DRIVE_IDENTITY_FOLDER);
+
                 file.setMimeType(SurespotConstants.MimeTypes.DRIVE_FOLDER);
 
-                com.google.api.services.drive.model.File insertedFile = mDriveHelper.getDriveService().files().insert(file).execute();
-
+                File insertedFile = mDriveHelper.getDriveService().files().create(file).execute();
                 identityDirId = insertedFile.getId();
-
             }
-
         }
         catch (UserRecoverableAuthIOException e) {
             SurespotLog.w(TAG, e, "createDriveIdentityDirectory");
@@ -911,6 +997,7 @@ public class ImportIdentityActivity extends Activity {
         }
     }
 
+
     private void chooseAccount(boolean ask) {
         String descriptionText = null;
         if (mMode == MODE_DRIVE) {
@@ -948,4 +1035,5 @@ public class ImportIdentityActivity extends Activity {
             mDialog.dismiss();
         }
     }
+
 }

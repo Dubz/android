@@ -154,11 +154,32 @@ public class Utils {
 
 	}
 
+	public static boolean putAlias(Context context, String username, String friendname, String alias) {
+		return putUserSharedPrefsString(context,username,"alias_" + friendname, alias);
+	}
+
+	public static String getAlias(Context context, String username, String friendname) {
+		return getUserSharedPrefsString(context, username, "alias_" + friendname);
+	}
+
+
+	public static boolean removeAlias(Context context, String username, String friendname) {
+		SharedPreferences sp = context.getSharedPreferences(username, Context.MODE_PRIVATE);
+		Editor e = sp.edit();
+		e.remove("alias_" + friendname);
+		return e.commit();
+	}
 
 	public static String getUserSharedPrefsString(Context context, String username, String key) {
 		SharedPreferences sp = context.getSharedPreferences(username, Context.MODE_PRIVATE);
 		return sp.getString(key, null);
 	}
+
+	public static boolean getUserSharedPrefsBoolean(Context context, String username, String key) {
+		SharedPreferences sp = context.getSharedPreferences(username, Context.MODE_PRIVATE);
+		return sp.getBoolean(key, false);
+	}
+
 
 	public static boolean putUserSharedPrefsString(Context context, String username, String key, String value) {
 		SharedPreferences sp = context.getSharedPreferences(username, Context.MODE_PRIVATE);
@@ -167,6 +188,12 @@ public class Utils {
 		return e.commit();
 	}
 
+	public static boolean putUserSharedPrefsBoolean(Context context, String username, String key, boolean value) {
+		SharedPreferences sp = context.getSharedPreferences(username, Context.MODE_PRIVATE);
+		Editor e = sp.edit();
+		e.putBoolean(key, value);
+		return e.commit();
+	}
 
 	public static boolean getSharedPrefsBoolean(Context context, String key) {
 		SharedPreferences settings = context.getSharedPreferences(SurespotConstants.PrefNames.PREFS_FILE, android.content.Context.MODE_PRIVATE);
@@ -186,6 +213,13 @@ public class Utils {
 		Editor editor = settings.edit();		
 		editor.remove(key);		
 		editor.commit();
+	}
+
+	public static void removeUserPref(Context context, String username, String key) {
+		SharedPreferences sp = context.getSharedPreferences(username, Context.MODE_PRIVATE);
+		Editor e = sp.edit();
+		e.remove(key);
+		e.commit();
 	}
 	
 	public static SharedPreferences getGlobalSharedPrefs(Context context) {

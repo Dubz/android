@@ -1,18 +1,22 @@
 package com.twofours.surespot.images;
 
+import android.content.ClipData;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.provider.MediaStore;
+import android.support.v4.content.FileProvider;
 
+import com.twofours.surespot.BuildConfig;
+import com.twofours.surespot.SurespotConstants;
+import com.twofours.surespot.SurespotLog;
 import com.twofours.surespot.activities.MainActivity;
 import com.twofours.surespot.chat.ChatController;
 import com.twofours.surespot.chat.ChatManager;
-import com.twofours.surespot.chat.ChatUtils;
+import com.twofours.surespot.utils.ChatUtils;
 import com.twofours.surespot.utils.FileUtils;
-import com.twofours.surespot.SurespotConstants;
-import com.twofours.surespot.SurespotLog;
 
 import java.io.File;
 
@@ -49,11 +53,20 @@ public class ImageCaptureHandler implements Parcelable {
         try {
             f = FileUtils.createGalleryImageFile(".jpg");
             mCurrentPhotoPath = f.getAbsolutePath();
-            intent.putExtra(MediaStore.EXTRA_OUTPUT, Uri.fromFile(f));
+
+            Uri photoURI = FileProvider.getUriForFile(activity,BuildConfig.APPLICATION_ID + ".provider",f);
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, photoURI);
+
+            //fix permission issue
+            //https://medium.com/@quiro91/sharing-files-through-intents-part-2-fixing-the-permissions-before-lollipop-ceb9bb0eec3a
+            if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.LOLLIPOP) {
+                intent.setClipData(ClipData.newRawUri("", photoURI));
+                intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION|Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            }
 
             activity.startActivityForResult(intent, SurespotConstants.IntentRequestCodes.REQUEST_CAPTURE_IMAGE);
         } catch (Exception e) {
-            SurespotLog.w(TAG, "capture", e);
+            SurespotLog.w(TAG,e, "capture");
         }
 
     }

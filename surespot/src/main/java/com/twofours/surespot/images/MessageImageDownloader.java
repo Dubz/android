@@ -16,6 +16,7 @@
 
 package com.twofours.surespot.images;
 
+import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
@@ -24,20 +25,18 @@ import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
 import android.view.View;
-import android.view.animation.Animation;
-import android.view.animation.AnimationUtils;
 import android.widget.ImageView;
 
 import com.twofours.surespot.SurespotApplication;
-import com.twofours.surespot.chat.ChatAdapter;
-import com.twofours.surespot.chat.ChatUtils;
-import com.twofours.surespot.chat.SurespotMessage;
 import com.twofours.surespot.SurespotConfiguration;
 import com.twofours.surespot.SurespotLog;
-import com.twofours.surespot.utils.Utils;
+import com.twofours.surespot.chat.ChatAdapter;
+import com.twofours.surespot.chat.SurespotMessage;
 import com.twofours.surespot.encryption.EncryptionController;
 import com.twofours.surespot.network.NetworkManager;
+import com.twofours.surespot.utils.ChatUtils;
 import com.twofours.surespot.utils.UIUtils;
+import com.twofours.surespot.utils.Utils;
 
 import java.io.BufferedInputStream;
 import java.io.FileInputStream;
@@ -63,9 +62,11 @@ public class MessageImageDownloader {
     private static Handler mHandler = new Handler(Looper.getMainLooper());
     private ChatAdapter mChatAdapter;
     private String mUsername;
+    private Context mContext;
 
 
-    public MessageImageDownloader(String username, ChatAdapter chatAdapter) {
+    public MessageImageDownloader(Context context, String username, ChatAdapter chatAdapter) {
+        mContext = context;
         mUsername = username;
         mChatAdapter = chatAdapter;
     }
@@ -80,14 +81,17 @@ public class MessageImageDownloader {
 
 
         if (bitmap == null) {
-            SurespotLog.d(TAG, "bitmap not in memory cache: " + uri);
+            SurespotLog.v(TAG, "bitmap not in memory cache: " + uri);
             forceDownload(imageView, message);
+            //imageView.setImageDrawable(null);
         }
         else {
-            SurespotLog.d(TAG, "loading bitmap from memory cache: " + uri);
+            SurespotLog.v(TAG, "loading bitmap from memory cache: " + uri);
             cancelPotentialDownload(imageView, message);
-            imageView.clearAnimation();
+            //     imageView.clearAnimation();
             imageView.setImageBitmap(bitmap);
+
+            ChatUtils.setImageViewLayout(imageView, bitmap.getWidth(), bitmap.getHeight());
             message.setLoaded(true);
             message.setLoading(false);
 
@@ -96,10 +100,10 @@ public class MessageImageDownloader {
         }
     }
 
-	/*
+    /*
      * Same as download but the image is always downloaded and the cache is not used. Kept private at the moment as its interest is not clear. private void
-	 * forceDownload(String url, ImageView view) { forceDownload(url, view, null); }
-	 */
+     * forceDownload(String url, ImageView view) { forceDownload(url, view, null); }
+     */
 
     /**
      * Same as download but the image is always downloaded and the cache is not used. Kept private at the moment as its interest is not clear.
@@ -185,7 +189,7 @@ public class MessageImageDownloader {
             String messageString = null;
             if (!TextUtils.isEmpty(messageData)) {
 
-                SurespotLog.d(TAG, "BitmapDownloaderTask getting %s,", messageData);
+                SurespotLog.d(TAG, "MessageImageDownloaderTask getting %s,", messageData);
 
                 InputStream encryptedImageStream = NetworkManager.getNetworkController(mChatAdapter.getContext(), mUsername).getFileStream(messageData);
 
@@ -207,7 +211,7 @@ public class MessageImageDownloader {
                     try {
                         inputStream = new PipedInputStream(out);
 
-                        EncryptionController.runDecryptTask(mUsername, mMessage.getOurVersion(mUsername), mMessage.getOtherUser(mUsername), mMessage.getTheirVersion(mUsername), mMessage.getIv(), mMessage.isHashed(),
+                        EncryptionController.runDecryptTask(mContext, mUsername, mMessage.getOurVersion(mUsername), mMessage.getOtherUser(mUsername), mMessage.getTheirVersion(mUsername), mMessage.getIv(), mMessage.isHashed(),
                                 new BufferedInputStream(encryptedImageStream), out);
 
                         if (mCancelled) {
@@ -292,36 +296,34 @@ public class MessageImageDownloader {
                         @Override
                         public void run() {
 
-                            if (finalBitmap != null) {
+                            if (!mCancelled) {
+                                if (finalBitmap != null) {
 
-                                if (!TextUtils.isEmpty(messageData)) {
-                                    MessageImageDownloader.addBitmapToCache(messageData, finalBitmap);
+                                    if (!TextUtils.isEmpty(messageData)) {
+                                        MessageImageDownloader.addBitmapToCache(messageData, finalBitmap);
+                                    }
+
+                                    if (!TextUtils.isEmpty(finalMessageString)) {
+                                        MessageImageDownloader.addBitmapToCache(finalMessageString, finalBitmap);
+                                    }
+
+                                    //    Drawable drawable = imageView.getDrawable();
+                                    //       if (drawable instanceof DownloadedDrawable) {
+
+                                    //   imageView.clearAnimation();
+                                    //   Animation fadeIn = AnimationUtils.loadAnimation(imageView.getContext(), android.R.anim.fade_in);// new
+                                    // imageView.startAnimation(fadeIn);
+                                    //       }
+
+                                    imageView.setImageBitmap(finalBitmap);
+                                    ChatUtils.setImageViewLayout(imageView, finalBitmap.getWidth(), finalBitmap.getHeight());
+                                    UIUtils.updateDateAndSize(mChatAdapter.getContext(), mMessage, (View) imageView.getParent());
+                                    mChatAdapter.checkLoaded();
                                 }
-
-                                if (!TextUtils.isEmpty(finalMessageString)) {
-                                    MessageImageDownloader.addBitmapToCache(finalMessageString, finalBitmap);
+                                else {
+                                    //TODO set error image
+                                    imageView.setImageDrawable(null);
                                 }
-
-
-                                Drawable drawable = imageView.getDrawable();
-                                if (drawable instanceof DownloadedDrawable) {
-
-                                    imageView.clearAnimation();
-                                    Animation fadeIn = AnimationUtils.loadAnimation(imageView.getContext(), android.R.anim.fade_in);// new
-                                    // AlphaAnimation(0,
-                                    // 1);
-                                    imageView.startAnimation(fadeIn);
-                                }
-
-                                imageView.setImageBitmap(finalBitmap);
-                                imageView.getLayoutParams().height = SurespotConfiguration.getImageDisplayHeight();
-
-                                UIUtils.updateDateAndSize(mChatAdapter.getContext(), mMessage, (View) imageView.getParent());
-                                mChatAdapter.checkLoaded();
-                            }
-                            else {
-                                //TODO set error image
-                                imageView.setImageDrawable(null);
                             }
                         }
                     });
@@ -388,6 +390,21 @@ public class MessageImageDownloader {
                 mBitmapCache.remove(sourceKey);
                 mBitmapCache.addBitmapToMemoryCache(destKey, bitmap);
             }
+        }
+    }
+
+    public static void duplicateCacheEntry(String sourceKey, String destKey) {
+        if (sourceKey != null && destKey != null) {
+            Bitmap bitmap = mBitmapCache.getBitmapFromMemCache(sourceKey);
+            if (bitmap != null) {
+                mBitmapCache.addBitmapToMemoryCache(destKey, bitmap);
+            }
+        }
+    }
+
+    public static void removeCacheEntry(String key) {
+        if (key != null && key != null) {
+            mBitmapCache.remove(key);
         }
     }
 }

@@ -1,8 +1,8 @@
-<com.twofours.surespot.chat.SoftKeyboardLayout android:id="@+id/chatLayout"
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:layout_width="fill_parent"
-    android:layout_height="fill_parent">
+<com.twofours.surespot.chat.SoftKeyboardLayout xmlns:android="http://schemas.android.com/apk/res/android"
+                                               xmlns:app="http://schemas.android.com/apk/res-auto"
+                                               android:id="@+id/chatLayout"
+                                               android:layout_width="match_parent"
+                                               android:layout_height="match_parent">
 
     <ImageView
         android:id="@+id/backgroundImage"
@@ -27,33 +27,104 @@
 
     <com.twofours.surespot.ui.FixedViewPager
         android:id="@+id/pager"
-        android:layout_width="fill_parent"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_above="@+id/editTexts"
         android:layout_below="@+id/indicator"/>
 
-    <FrameLayout
+    <LinearLayout
         android:id="@+id/fButtons"
+
         android:layout_width="wrap_content"
         android:layout_height="match_parent"
         android:layout_above="@+id/fEmoji"
+        android:layout_alignParentLeft="true"
         android:layout_alignTop="@+id/editTexts"
-        android:layout_alignWithParentIfMissing="true">
 
-        <ImageView
-            android:id="@+id/bEmoji"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:padding="5dp"
-            android:visibility="gone"/>
+        android:orientation="horizontal">
+
 
         <ImageView
             android:id="@+id/bQR"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:padding="5dp"
-            android:src="@drawable/qr_surespot"/>
-    </FrameLayout>
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="bottom"
+            android:src="@drawable/qr_surespot"
+            android:visibility="gone"/>
+
+        <ImageView
+            android:id="@+id/bEmoji"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="bottom"
+            android:paddingBottom="4dp"
+            android:paddingTop="4dp"
+            android:src="@drawable/face"
+            android:visibility="visible"
+            />
+
+
+        <ImageView
+            android:id="@+id/bExpand"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="bottom"
+            android:paddingBottom="6dp"
+            android:paddingTop="6dp"
+            android:src="@drawable/arrow"
+            />
+
+
+        <ImageView
+            android:id="@+id/bGIF"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="bottom"
+            android:layout_marginLeft="5dp"
+            android:layout_marginRight="5dp"
+            android:gravity="center"
+            android:src="@drawable/gif"
+            android:text="@string/gif"
+            android:textSize="@dimen/abc_text_size_large_material"
+            android:textStyle="bold"
+            android:visibility="visible"/>
+
+        <ImageView
+            android:id="@+id/bGallery"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="bottom"
+            android:layout_marginLeft="5dp"
+            android:layout_marginRight="5dp"
+            android:src="@drawable/photo"
+            android:visibility="visible"
+            />
+
+
+        <com.twofours.surespot.ui.TintableImageView
+            android:id="@+id/bCamera"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="bottom"
+            android:layout_marginLeft="5dp"
+            android:layout_marginRight="5dp"
+            android:src="@drawable/camera"
+            android:visibility="visible"
+            />
+
+
+        <ImageView
+            android:id="@+id/bPlus"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="bottom"
+            android:layout_marginLeft="5dp"
+            android:layout_marginRight="5dp"
+            android:src="@drawable/elipsis"
+            android:visibility="gone"
+            />
+
+    </LinearLayout>
 
     <FrameLayout
         android:id="@+id/editTexts"
@@ -62,7 +133,8 @@
         android:layout_above="@+id/fEmoji"
         android:layout_alignWithParentIfMissing="true"
         android:layout_toLeftOf="@+id/bSend"
-        android:layout_toRightOf="@+id/fButtons">
+        android:layout_toRightOf="@+id/fButtons"
+        >
 
         <EditText
             android:id="@+id/etInvite"
@@ -72,8 +144,8 @@
             android:imeOptions="actionDone|flagNoExtractUi"
             android:inputType="textNoSuggestions|textVisiblePassword"
             android:maxHeight="150dp"
-            android:minHeight="45dp"
-            android:singleLine="true">
+            android:maxLines="1"
+            android:minHeight="45dp">
         </EditText>
 
         <com.rockerhieu.emojicon.EmojiconEditText
@@ -87,62 +159,131 @@
             android:maxLines="5"
             android:minHeight="45dp"
             android:scrollbars="vertical"
-            app:emojiconSize="30dp"
-            android:singleLine="false"
-            android:visibility="gone">
+            android:visibility="gone"
+            app:emojiconSize="30dp">
         </com.rockerhieu.emojicon.EmojiconEditText>
+
+        <LinearLayout
+            android:id="@+id/giphySearchFieldLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <EditText
+                android:id="@+id/etGiphy"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="100"
+
+                android:imeOptions="actionSearch|flagNoExtractUi"
+                android:inputType="text|textCapSentences"
+                android:maxHeight="150dp"
+                android:maxLines="1"
+                android:minHeight="45dp">
+            </EditText>
+
+            <ImageView
+                android:id="@+id/poweredByGiphy"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:src="@drawable/powered_by_giphy_light"/>
+        </LinearLayout>
+
     </FrameLayout>
 
     <FrameLayout
         android:id="@+id/bSend"
-        android:layout_width="70dp"
-        android:layout_height="70dp"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
         android:layout_above="@+id/fEmoji"
         android:layout_alignParentRight="true"
         android:layout_alignWithParentIfMissing="true"
-        android:layout_marginBottom="-10dp"
-        android:layout_marginRight="-10dp"
-        android:background="@drawable/send_button">
 
-        <ImageView
+
+        >
+
+        <com.twofours.surespot.ui.TintableImageView
             android:id="@+id/ivInvite"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginLeft="5dp"
+            android:layout_marginRight="5dp"
             android:layout_gravity="center"
-            android:src="@drawable/ic_menu_invite">
-        </ImageView>
+            android:src="@drawable/add_friend">
+        </com.twofours.surespot.ui.TintableImageView>
 
-        <ImageView
+        <com.twofours.surespot.ui.TintableImageView
             android:id="@+id/ivVoice"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:src="@drawable/ic_btn_speak_now">
-        </ImageView>
+            android:layout_marginLeft="5dp"
+            android:layout_marginRight="5dp"
+            android:src="@drawable/mic">
+        </com.twofours.surespot.ui.TintableImageView>
 
-        <ImageView
+        <com.twofours.surespot.ui.TintableImageView
             android:id="@+id/ivHome"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:src="@drawable/ic_menu_home">
-        </ImageView>
+            android:layout_marginLeft="5dp"
+            android:layout_marginRight="5dp"
+            android:src="@drawable/home">
+        </com.twofours.surespot.ui.TintableImageView>
 
-        <ImageView
+        <com.twofours.surespot.ui.TintableImageView
             android:id="@+id/ivSend"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:src="@drawable/ic_menu_send">
-        </ImageView>
+            android:layout_marginLeft="5dp"
+            android:layout_marginRight="5dp"
+            android:src="@drawable/send">
+        </com.twofours.surespot.ui.TintableImageView>
     </FrameLayout>
 
-    <!--<io.github.rockerhieu.emojicon.EmojiconsView-->
-        <!--android:id="@+id/emojicons_view"-->
-        <!--android:layout_width="match_parent"-->
-        <!--android:layout_height="200dp"-->
-        <!--android:visibility="gone"-->
-        <!--android:layout_alignParentBottom="true" />-->
+
+    <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+                 android:id="@+id/gifFrame"
+                 android:layout_width="match_parent"
+                 android:layout_height="150dp"
+                 android:layout_above="@id/editTexts"
+                 android:layout_alignParentEnd="true"
+                 android:layout_alignParentLeft="true"
+                 android:layout_alignParentRight="true"
+                 android:layout_alignParentStart="true"
+                 android:visibility="gone">
+
+        <ProgressBar
+            android:id="@+id/gif_progress_bar"
+            style="?android:progressBarStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:visibility="gone"
+            />
+
+        <android.support.v7.widget.RecyclerView
+            android:id="@+id/rvGifs"
+            android:layout_width="match_parent"
+            android:layout_height="150dp"
+            android:orientation="horizontal"
+
+            />
+
+        <TextView
+            android:id="@+id/tv_no_gifs"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="@string/no_GIFS_found"
+            android:visibility="gone"
+            />
+
+
+    </FrameLayout>
 
     <RelativeLayout
         android:id="@+id/voiceHeader"

@@ -53,11 +53,12 @@ public class SoftKeyboardLayout extends RelativeLayout {
 		int statusBarHeight = res > 0 ? getResources().getDimensionPixelSize(res) : 0;
 
 		View rootView = getRootView();
-		final int availableHeight = rootView.getHeight() - (rect.top != 0 ? statusBarHeight : 0) - getViewInset(rootView);
 		getWindowVisibleDisplayFrame(rect);
+		final int availableHeight = rootView.getHeight() - (rect.top != 0 ? statusBarHeight : 0) - getViewInset(rootView);
+
 
 		final int keyboardHeight = availableHeight - (rect.bottom - rect.top);
-		//SurespotLog.d(TAG, "keyboardHeight: %d", keyboardHeight);
+		//SurespotLog.d(TAG, "keyboardHeight: %d, availableHeight: %d", keyboardHeight, availableHeight);
 		if (keyboardHeight > getResources().getDimensionPixelSize(R.dimen.min_emoji_drawer_height)) {
 			onKeyboardShown(keyboardHeight);
 			mKeyboardVisible = true;
@@ -66,8 +67,11 @@ public class SoftKeyboardLayout extends RelativeLayout {
 			mKeyboardVisible = false;
 		}
 
+
 		if (mListener != null)
 			mListener.onKeyboardShown(mKeyboardVisible);
+
+
 
 		super.onMeasure(widthMeasureSpec, heightMeasureSpec);
 	}
@@ -109,6 +113,7 @@ public class SoftKeyboardLayout extends RelativeLayout {
 			case Surface.ROTATION_180:
 				setKeyboardPortraitHeight(keyboardHeight);
 		}
+
 	}
 
 	public boolean isKeyboardVisible() {

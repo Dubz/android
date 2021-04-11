@@ -3,11 +3,11 @@ package com.twofours.surespot.chat;
 import android.annotation.SuppressLint;
 import android.app.AlertDialog;
 import android.app.Dialog;
-import android.app.DialogFragment;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.support.v4.app.DialogFragment;
 
 import com.twofours.surespot.R;
 import com.twofours.surespot.activities.MainActivity;
@@ -29,8 +29,9 @@ public class TextMessageMenuFragment extends DialogFragment {
         // plain text is not converted to json string so store it separately
         if (message.getPlainData() != null) {
             args.putString("messageText", message.getPlainData().toString());
-            args.putString("username", username);
         }
+        args.putString("username", username);
+
         f.setArguments(args);
 
         return f;
@@ -97,7 +98,8 @@ public class TextMessageMenuFragment extends DialogFragment {
                                             public void handleResponse(Boolean result) {
                                                 if (result) {
                                                     cc.deleteMessage(mMessage, true);
-                                                } else {
+                                                }
+                                                else {
                                                     dialogi.cancel();
                                                 }
                                             }
@@ -105,7 +107,8 @@ public class TextMessageMenuFragment extends DialogFragment {
                                             ;
                                         });
                                 mActivity.setChildDialog(dialog);
-                            } else {
+                            }
+                            else {
                                 cc.deleteMessage(mMessage, true);
                             }
                         }

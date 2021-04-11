@@ -4,7 +4,6 @@ import android.content.Context;
 import android.os.AsyncTask;
 
 import com.twofours.surespot.chat.ChatManager;
-import com.twofours.surespot.chat.ChatUtils;
 import com.twofours.surespot.chat.SurespotMessage;
 import com.twofours.surespot.encryption.EncryptionController;
 import com.twofours.surespot.friends.Friend;
@@ -15,6 +14,7 @@ import com.twofours.surespot.network.NetworkManager;
 import com.twofours.surespot.services.CredentialCachingService;
 import com.twofours.surespot.services.CredentialCachingService.SharedSecretKey;
 import com.twofours.surespot.services.CredentialCachingService.VersionMap;
+import com.twofours.surespot.utils.ChatUtils;
 import com.twofours.surespot.utils.FileUtils;
 import com.twofours.surespot.utils.Utils;
 
@@ -213,7 +213,7 @@ public class StateController {
             if (messages != null) {
                 synchronized (messages) {
                     int messagesSize = messages.size();
-                    int saveCount = Math.min(SurespotConstants.SAVE_MESSAGE_MINIMUM, messagesSize);
+                    int saveCount = Math.min(SurespotConfiguration.SAVE_MESSAGE_MINIMUM, messagesSize);
 
                     SurespotLog.v(TAG, "saving %d messages for spot %s", saveCount, spot);
                     String sMessages = ChatUtils.chatMessagesToJson(
@@ -299,6 +299,9 @@ public class StateController {
                 for (String name : IdentityController.getIdentityNames(context)) {
                     // last chat and user we had open
                     Utils.putUserSharedPrefsString(context, name, SurespotConstants.PrefNames.LAST_CHAT, null);
+                    Utils.putUserSharedPrefsString(context, name, SurespotConstants.PrefNames.GCM_ID_SENT, null);
+                    Utils.putUserSharedPrefsString(context, name, SurespotConstants.PrefNames.GCM_ID_RECEIVED, null);
+                    Utils.putUserSharedPrefsString(context, name, SurespotConstants.PrefNames.RECENTLY_USED_GIFS, null);
                 }
                 Utils.putSharedPrefsString(context, SurespotConstants.PrefNames.LAST_USER, null);
 
@@ -321,7 +324,7 @@ public class StateController {
                 String localImageDir = FileUtils.getFileUploadDir(context);
                 FileUtils.deleteRecursive(new File(localImageDir));
 
-                CredentialCachingService ccs = SurespotApplication.getCachingService();
+                CredentialCachingService ccs = SurespotApplication.getCachingService(context);
                 if (ccs != null) {
                     ccs.clear();
                 }

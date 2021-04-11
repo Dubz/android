@@ -1,9 +1,10 @@
 package com.twofours.surespot.chat;
 
-import android.app.DialogFragment;
-import android.app.Fragment;
+
 import android.content.Intent;
 import android.os.Bundle;
+import android.support.v4.app.DialogFragment;
+import android.support.v4.app.Fragment;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -21,6 +22,7 @@ import com.twofours.surespot.SurespotConstants;
 import com.twofours.surespot.SurespotLog;
 import com.twofours.surespot.activities.MainActivity;
 import com.twofours.surespot.friends.Friend;
+import com.twofours.surespot.gifs.GifMessageMenuFragment;
 import com.twofours.surespot.images.ImageMessageMenuFragment;
 import com.twofours.surespot.images.ImageViewActivity;
 import com.twofours.surespot.images.MessageImageDownloader;
@@ -122,6 +124,12 @@ public class ChatFragment extends Fragment {
                             SeekBar seekBar = (SeekBar) view.findViewById(R.id.seekBarVoice);
                             VoiceController.playVoiceMessage(ChatFragment.this.getActivity(), seekBar, message);
                         }
+                        else {
+                            if (message.getMimeType().equals(SurespotConstants.MimeTypes.GIF_LINK)) {
+                                message.setDownloadGif(true);
+                                mChatAdapter.notifyDataSetChanged();
+                            }
+                        }
                     }
                 }
             }
@@ -134,26 +142,29 @@ public class ChatFragment extends Fragment {
 
                 SurespotMessage message = (SurespotMessage) mChatAdapter.getItem(position);
                 try {
-                    if (message.getMimeType().equals(SurespotConstants.MimeTypes.TEXT) || message.getMimeType().equals(SurespotConstants.MimeTypes.GIF_LINK)) {
+                    DialogFragment dialog;
+                    switch (message.getMimeType()) {
+                        case SurespotConstants.MimeTypes.TEXT:
+                            dialog = TextMessageMenuFragment.newInstance(mOurUsername, message);
+                            dialog.show(getActivity().getSupportFragmentManager(), "TextMessageMenuFragment");
+                            break;
+                        case SurespotConstants.MimeTypes.IMAGE:
+                            dialog = ImageMessageMenuFragment.newInstance(mOurUsername, message);
+                            dialog.show(getActivity().getSupportFragmentManager(), "ImageMessageMenuFragment");
+                            break;
+                        case SurespotConstants.MimeTypes.M4A:
+                            dialog = VoiceMessageMenuFragment.newInstance(mOurUsername, message);
+                            dialog.show(getActivity().getSupportFragmentManager(), "VoiceMessageMenuFragment");
+                            break;
+                        case SurespotConstants.MimeTypes.GIF_LINK:
+                        case SurespotConstants.MimeTypes.FILE:
+                        default:
+                            dialog = GifMessageMenuFragment.newInstance(mOurUsername, message);
+                            dialog.show(getActivity().getSupportFragmentManager(), "GifMessageMenuFragment");
+                            break;
+                    }
 
-                        DialogFragment dialog = TextMessageMenuFragment.newInstance(mOurUsername, message);
-                        dialog.show(getActivity().getFragmentManager(), "TextMessageMenuFragment");
-                        return true;
-                    }
-                    else {
-                        if (message.getMimeType().equals(SurespotConstants.MimeTypes.IMAGE)) {
-                            DialogFragment dialog = ImageMessageMenuFragment.newInstance(mOurUsername, message);
-                            dialog.show(getActivity().getFragmentManager(), "ImageMessageMenuFragment");
-                            return true;
-                        }
-                        else {
-                            if (message.getMimeType().equals(SurespotConstants.MimeTypes.M4A)) {
-                                DialogFragment dialog = VoiceMessageMenuFragment.newInstance(mOurUsername, message);
-                                dialog.show(getActivity().getFragmentManager(), "VoiceMessageMenuFragment");
-                                return true;
-                            }
-                        }
-                    }
+                    return true;
                 }
                 catch (IllegalStateException e) {
                     //swallow this fucker
@@ -163,7 +174,6 @@ public class ChatFragment extends Fragment {
                 return false;
             }
         });
-
 
         return view;
     }
@@ -357,7 +367,7 @@ public class ChatFragment extends Fragment {
 
                 @Override
                 public void run() {
-                    mListView.setSelection(mChatAdapter.getCount()-1);
+                    mListView.setSelection(mChatAdapter.getCount() - 1);
                 }
             }, 400);
         }

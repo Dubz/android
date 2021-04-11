@@ -9,6 +9,10 @@ android {
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         multiDexEnabled rootProject.ext.multiDexEnabled
+
+        def documentsAuthorityValue = "com.twofours.surespot.localstorage.documents"
+        manifestPlaceholders = [documentsAuthority: documentsAuthorityValue]
+        buildConfigField "String", "DOCUMENTS_AUTHORITY", "\"${documentsAuthorityValue}\""
     }
 
 
@@ -19,6 +23,7 @@ android {
         abortOnError false
     }
 
+    
     buildTypes {
         debug {
             minifyEnabled false
@@ -45,28 +50,35 @@ android {
 }
 
 dependencies {
-    compile project(':viewpagerindicator')
-    compile project(':imageViewTouch')
-    compile project(':androidkeystore')
-    compile project(":ColorPickerPreference")
-    compile project(':libs:emojicon')
-    compile 'com.jakewharton:disklrucache:2.0.2'
-    compile 'com.squareup.okhttp3:logging-interceptor:3.6.0'
-    compile 'com.squareup.okhttp3:okhttp:3.6.0'
-    compile('com.google.android.gms:play-services-auth:9.8.0')
-    compile('com.google.android.gms:play-services-gcm:9.8.0')
-    compile('com.google.android.gms:play-services-drive:9.8.0')
-    compile 'com.google.http-client:google-http-client-gson:1.19.0'
-    compile 'com.google.code.gson:gson:2.4'
-    compile 'com.google.guava:guava:18.0'
-    compile 'com.google.protobuf:protobuf-java:2.4.1'
-    compile 'com.android.support:multidex:1.0.1'
-    compile files('libs/google-api-client-1.17.0-rc.jar')
-    compile files('libs/google-api-client-android-1.17.0-rc.jar')
-    compile files('libs/google-api-services-drive-v2-rev103-1.17.0-rc.jar')
-    compile files('libs/google-http-client-android-1.17.0-rc.jar')
-    compile files('libs/google-oauth-client-1.17.0-rc.jar')
-    compile 'io.socket:socket.io-client:0.8.3'
-    compile 'ch.acra:acra:4.8.5'
-    compile 'com.android.support:support-v4:25.2.0'
+    implementation project(':libs:viewpagerindicator')
+    implementation project(':libs:androidkeystore')
+    implementation project(':libs:emojicon')
+    implementation 'com.android.support:support-v4:28.0.0'
+    implementation "com.android.support:support-compat:28.0.0"
+    implementation "com.android.support:support-core-utils:28.0.0"
+    implementation 'com.android.support:appcompat-v7:28.0.0'
+
+    implementation 'com.android.support:design:28.0.0'
+    implementation 'pub.devrel:easypermissions:0.2.1'
+    implementation('com.google.api-client:google-api-client-android:1.24.1') {
+        exclude group: 'org.apache.httpcomponents'
+    }
+    implementation('com.google.apis:google-api-services-drive:v3-rev136-1.25.0') {
+        exclude group: 'org.apache.httpcomponents'
+    }
+    implementation 'com.jakewharton:disklrucache:2.0.2'
+    implementation 'com.squareup.okhttp3:logging-interceptor:3.12.1'
+    implementation 'com.squareup.okhttp3:okhttp:3.12.1'
+    implementation 'com.google.android.gms:play-services-auth:16.0.1'
+    implementation "com.google.firebase:firebase-messaging:17.5.0"
+    implementation 'com.google.android.gms:play-services-analytics:16.0.8'
+
+    implementation 'com.android.support:multidex:1.0.3'
+    implementation('io.socket:socket.io-client:1.0.0') {
+        exclude group: 'org.json', module: 'json'
+    }
+    implementation 'ch.acra:acra:4.11'
+    implementation 'pl.droidsonroids.gif:android-gif-drawable:1.2.12'
+    implementation 'net.margaritov.preference.colorpicker.ColorPickerPreference:ColorPickerPreference:1.0.0'
+    implementation 'it.sephiroth.android.library.imagezoom:imagezoom:2.2.5'
 }

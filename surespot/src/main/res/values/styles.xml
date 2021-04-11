@@ -1,11 +1,18 @@
 <resources xmlns:android="http://schemas.android.com/apk/res/android">
+    <declare-styleable name="VolumeEnvelopeView">
+        <attr name="color" format="color"/>
+    </declare-styleable>
 
+    <declare-styleable name="TintableImageView">
+        <attr name="surespot_tint" format="reference|color" />
+    </declare-styleable>
 
     <style name="DefaultTheme" parent="android:style/Theme.Holo.Light.DarkActionBar">
         <item name="android:buttonStyle">?android:attr/borderlessButtonStyle</item>
         <item name="android:actionBarStyle">
             @android:style/Widget.Holo.Light.ActionBar.Solid.Inverse
         </item>
+        <item name="surespot_tint">@drawable/button_selector_light</item>
     </style>
 
     <style name="TranslucentDefault" parent="@style/DefaultTheme">
@@ -15,20 +22,18 @@
         <item name="android:buttonStyle">@android:style/Widget.Holo.ActionButton</item>
     </style>
 
-    <style name="BlackTheme" parent="@android:style/Theme.Holo">
+    <style name="BlackThemeBase" parent="@android:style/Theme.Holo">
         <item name="android:buttonStyle">?android:attr/borderlessButtonStyle</item>
         <item name="android:actionBarStyle">@android:style/Widget.Holo.ActionBar.Solid</item>
+        <item name="surespot_tint">@drawable/button_selector_dark</item>
+        <item name="android:actionMenuTextColor">@android:color/white</item>
+        <item name="actionMenuTextColor">@android:color/white</item>
     </style>
 
-
-    <style name="TranslucentBlack" parent="@style/BlackTheme">
+    <style name="TranslucentBlack" parent="@style/BlackThemeBase">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:colorBackgroundCacheHint">@null</item>
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:buttonStyle">@android:style/Widget.Holo.ActionButton</item>
     </style>
-
-    <declare-styleable name="VolumeEnvelopeView">
-        <attr name="color" format="color"/>
-    </declare-styleable>
 </resources>

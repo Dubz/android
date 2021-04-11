@@ -2,23 +2,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     package="com.twofours.surespot"
-    android:versionCode="72"
-    android:versionName="72">
+    android:versionCode="80"
+    android:versionName="80">
 
-
-    <permission
-        android:name="com.twofours.surespot.permission.C2D_MESSAGE"
-        android:protectionLevel="signature" />
-
-    <uses-permission android:name="com.twofours.surespot.permission.C2D_MESSAGE" />
-    <!-- App receives GCM messages. -->
-    <uses-permission android:name="com.google.android.c2dm.permission.RECEIVE" />
-    <!-- GCM connects to Google Services. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- GCM requires a Google account. -->
     <uses-permission android:name="android.permission.GET_ACCOUNTS" />
-    <!-- Keeps the processor from sleeping when a message is received. -->
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
@@ -42,25 +30,8 @@
         android:largeHeap="true"
         tools:replace="android:label">
 
-        <meta-data
-            android:name="com.google.android.gms.version"
-            android:value="@integer/google_play_services_version"></meta-data>
-
-        <receiver
-            android:name="com.google.android.gms.gcm.GcmReceiver"
-            android:exported="true"
-
-            android:permission="com.google.android.c2dm.permission.SEND">
-            <intent-filter>
-                <action android:name="com.google.android.c2dm.intent.REGISTRATION" />
-                <action android:name="com.google.android.c2dm.intent.RECEIVE" />
-
-                <category android:name="com.two2fours.surespot" />
-            </intent-filter>
-        </receiver>
-
         <!-- Used for install referral measurement -->
-        <service android:name="com.google.analytics.tracking.android.CampaignTrackingService" />
+        <service android:name="com.google.android.gms.analytics.CampaignTrackingService" />
 
         <receiver android:name="com.twofours.surespot.SurespotBroadcastReceiver">
             <intent-filter>
@@ -68,29 +39,17 @@
             </intent-filter>
         </receiver>
 
-        <service
-            android:name=".services.SurespotGcmListenerService"
-            android:exported="false">
+        <service android:name=".services.SurespotFirebaseMessagingService">
             <intent-filter>
-                <action android:name="com.google.android.c2dm.intent.RECEIVE" />
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
-        <!-- [END gcm_listener] -->
-        <!-- [START instanceId_listener] -->
-        <service
-            android:name=".services.SurespotInstanceIDListenerService"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.google.android.gms.iid.InstanceID" />
-            </intent-filter>
-        </service>
-        <!-- [END instanceId_listener] -->
+
         <service
             android:name=".services.RegistrationIntentService"
-            android:exported="false"></service>
-        <service
-            android:name="com.twofours.surespot.services.CredentialCachingService"
-            android:exported="false"></service>
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            />
 
         <activity
             android:name="com.twofours.surespot.activities.MainActivity"
@@ -131,7 +90,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data
-                    android:host="server.surespot.me"
+                    android:host="*.surespot.me"
                     android:pathPrefix="/autoinvite"
                     android:scheme="https" />
             </intent-filter>
@@ -152,7 +111,8 @@
             android:name="com.twofours.surespot.images.ImageSelectActivity"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:windowSoftInputMode="stateAlwaysHidden" />
-        <activity android:name="com.twofours.surespot.activities.SettingsActivity"></activity>
+
+        <activity android:name="com.twofours.surespot.activities.SettingsActivity"/>
         <activity android:name="com.twofours.surespot.backup.ExportIdentityActivity">
             <intent-filter>
                 <action android:name="com.twofours.surespot.backup.ExportIdentityActivity" />
@@ -245,6 +205,16 @@
         <activity
             android:name="com.twofours.surespot.identity.SurespotKeystoreActivity"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <provider
+            android:name="android.support.v4.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/provider_paths"/>
+        </provider>
     </application>
 
 </manifest>

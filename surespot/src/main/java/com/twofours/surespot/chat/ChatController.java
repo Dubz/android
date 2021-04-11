@@ -1,6 +1,7 @@
 package com.twofours.surespot.chat;
 
-import android.app.FragmentManager;
+import android.annotation.SuppressLint;
+import android.app.Activity;
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -11,12 +12,16 @@ import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Handler;
 import android.os.Looper;
+import android.support.v4.app.FragmentManager;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.app.TaskStackBuilder;
 import android.support.v4.view.ViewPager;
 import android.text.SpannableStringBuilder;
 import android.text.TextUtils;
 import android.view.MenuItem;
+import android.view.View;
+import android.widget.ListView;
+import android.widget.SeekBar;
 
 import com.rockerhieu.emojicon.EmojiconHandler;
 import com.twofours.surespot.R;
@@ -28,7 +33,9 @@ import com.twofours.surespot.SurespotConstants;
 import com.twofours.surespot.SurespotLog;
 import com.twofours.surespot.Tuple;
 import com.twofours.surespot.activities.MainActivity;
+import com.twofours.surespot.backup.DriveHelper;
 import com.twofours.surespot.encryption.EncryptionController;
+import com.twofours.surespot.filetransfer.FileTransferUtils;
 import com.twofours.surespot.friends.AutoInviteData;
 import com.twofours.surespot.friends.Friend;
 import com.twofours.surespot.friends.FriendAdapter;
@@ -42,7 +49,9 @@ import com.twofours.surespot.network.NetworkController;
 import com.twofours.surespot.network.NetworkHelper;
 import com.twofours.surespot.network.NetworkManager;
 import com.twofours.surespot.services.CredentialCachingService;
+import com.twofours.surespot.utils.ChatUtils;
 import com.twofours.surespot.utils.Utils;
+import com.twofours.surespot.voice.VoiceController;
 import com.viewpagerindicator.TitlePageIndicator;
 
 import org.json.JSONArray;
@@ -84,6 +93,7 @@ import okhttp3.Callback;
 import okhttp3.Cookie;
 import okhttp3.Response;
 
+@SuppressLint("StaticFieldLeak")
 public class ChatController {
 
     private static final String TAG = "ChatController";
@@ -102,7 +112,7 @@ public class ChatController {
 
     private NetworkController mNetworkController;
 
-    private Context mContext;
+    private Activity mContext;
     public static final int MODE_NORMAL = 0;
     public static final int MODE_SELECT = 1;
 
@@ -144,7 +154,9 @@ public class ChatController {
     private ProcessNextMessageTask mResendTask;
     private boolean mErrored;
 
-    ChatController(Context context, String username) {
+    private DriveHelper mDriveHelper;
+
+    ChatController(Activity context, String username) {
         SurespotLog.d(TAG, "constructor, username: %s", username);
 
         mContext = context;
@@ -152,6 +164,7 @@ public class ChatController {
         mNetworkController = NetworkManager.getNetworkController(context, mUsername);
         mNotificationManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         mBuilder = new NotificationCompat.Builder(mContext);
+        mDriveHelper = new DriveHelper(context, true);
 
         mEarliestMessage = new HashMap<String, Integer>();
         mChatAdapters = new HashMap<String, ChatAdapter>();
@@ -162,7 +175,7 @@ public class ChatController {
 
     // this has to be done outside of the contructor as it creates fragments, which need chat controller instance
     void attach(
-            Context context,
+            Activity context,
             ViewPager viewPager,
             FragmentManager fm,
             TitlePageIndicator pageIndicator, ArrayList<MenuItem> menuItems,
@@ -226,7 +239,7 @@ public class ChatController {
     // this is wired up to listen for a message from the   It's UI stuff
     public void connected() {
         setProgress("connect", false);
-        new Handler(Looper.getMainLooper()).post(new Runnable() {
+        mHandler.post(new Runnable() {
             @Override
             public void run() {
                 getFriendsAndData();
@@ -281,18 +294,41 @@ public class ChatController {
                 @Override
                 protected Void doInBackground(Void... params) {
                     SurespotLog.d(TAG, "ChatAdapter open for user: %s", otherUser);
-                    if (message.getMimeType().equals(SurespotConstants.MimeTypes.TEXT) || message.getMimeType().equals(SurespotConstants.MimeTypes.GIF_LINK)) {
+                    if (message.getMimeType().equals(SurespotConstants.MimeTypes.TEXT) ||
+                            message.getMimeType().equals(SurespotConstants.MimeTypes.GIF_LINK) ||
+                            message.getMimeType().equals(SurespotConstants.MimeTypes.FILE)) {
+
 
                         // decrypt it before adding
-                        final String plainText = EncryptionController.symmetricDecrypt(mUsername, message.getOurVersion(mUsername), message.getOtherUser(mUsername),
+                        final String plainText = EncryptionController.symmetricDecrypt(mContext, mUsername, message.getOurVersion(mUsername), message.getOtherUser(mUsername),
                                 message.getTheirVersion(mUsername), message.getIv(), message.isHashed(), message.getData());
 
-                        // substitute emoji
+                        //SurespotLog.d(TAG, "handle message, decrypted plain text: %s", plainText);
                         if (plainText != null) {
                             // set plaintext in message so we don't have to decrypt again
-                            SpannableStringBuilder builder = new SpannableStringBuilder(plainText);
-                            EmojiconHandler.addEmojis(mContext, builder, 30);
-                            message.setPlainData(builder.toString());
+                            switch (message.getMimeType()) {
+                                case SurespotConstants.MimeTypes.TEXT:
+                                    // substitute emoji
+                                    SpannableStringBuilder builder = new SpannableStringBuilder(plainText);
+                                    EmojiconHandler.addEmojis(mContext, builder, 30);
+                                    message.setPlainData(builder.toString());
+                                    break;
+                                case SurespotConstants.MimeTypes.GIF_LINK:
+                                    message.setPlainData(plainText);
+                                    break;
+                                case SurespotConstants.MimeTypes.FILE:
+                                    SurespotMessage.FileMessageData fcm = SurespotMessage.FileMessageData.fromJSONString(plainText);
+                                    SurespotLog.d(TAG, "handleMessage, server FileMessageData: %s", fcm);
+                                    if (message.getFileMessageData() == null) {
+                                        message.setFileMessageData(new SurespotMessage.FileMessageData());
+                                    }
+                                    message.getFileMessageData().setCloudUrl(fcm.getCloudUrl());
+                                    message.getFileMessageData().setFilename(fcm.getFilename());
+                                    message.getFileMessageData().setSize(fcm.getSize());
+                                    message.getFileMessageData().setMimeType(fcm.getMimeType());
+                                    SurespotLog.d(TAG, "handleMessage, after FileMessageData: %s", message.getFileMessageData());
+                                    break;
+                            }
                         }
                         else {
                             // error decrypting
@@ -300,7 +336,9 @@ public class ChatController {
                             message.setPlainData(mContext.getString(R.string.message_error_decrypting_message));
                         }
                     }
-                    else {
+                    else
+
+                    {
                         if (message.getMimeType().equals(SurespotConstants.MimeTypes.IMAGE) ||
                                 message.getMimeType().equals(SurespotConstants.MimeTypes.M4A)) {
                             // if it's an image that i sent
@@ -366,7 +404,9 @@ public class ChatController {
                 }
             }.execute();
         }
-        else {
+        else
+
+        {
             SurespotLog.d(TAG, "ChatAdapter not open for user: %s", otherUser);
 
             Friend friend = mFriendAdapter.getFriend(otherUser);
@@ -419,10 +459,7 @@ public class ChatController {
 
     // add entry to http cache for image we sent so we don't download it again
     public void handleCachedFile(ChatAdapter chatAdapter, SurespotMessage message) {
-
-
         SurespotLog.d(TAG, "handleCachedFile");
-
         SurespotMessage localMessage = chatAdapter.getMessageByIv(message.getIv());
         if (localMessage != null && localMessage.getData() != null) {
             synchronized (localMessage) {
@@ -695,10 +732,8 @@ public class ChatController {
                                 }
                             }
 
-                            if (friend != null) {
-                                mFriendAdapter.sort();
-                                mFriendAdapter.notifyDataSetChanged();
-                            }
+                            mFriendAdapter.sort();
+                            mFriendAdapter.notifyDataSetChanged();
 
                             handleAutoInvite();
                             processNextMessage();
@@ -738,6 +773,21 @@ public class ChatController {
             mPreConnectIds.put(username, idPair);
         }
     }
+
+    public void mute(String name) {
+        Friend friend = getFriendAdapter().getFriend(name);
+        friend.setMuted(true);
+        saveFriends();
+        getFriendAdapter().notifyDataSetChanged();
+    }
+
+    public void unmute(String name) {
+        Friend friend = getFriendAdapter().getFriend(name);
+        friend.setMuted(false);
+        saveFriends();
+        getFriendAdapter().notifyDataSetChanged();
+    }
+
 
     private class LatestIdPair {
         int latestMessageId;
@@ -1119,7 +1169,7 @@ public class ChatController {
             StateController.wipeUserState(mContext, mUsername, deletedUser);
 
             // clear in memory cached data
-            CredentialCachingService ccs = SurespotApplication.getCachingService();
+            CredentialCachingService ccs = SurespotApplication.getCachingService(mContext);
             if (ccs != null) {
                 ccs.clearUserData(deleter, deletedUser);
             }
@@ -1452,8 +1502,6 @@ public class ChatController {
 
         mTabShowingCallback.handleResponse(friend);
         if (friend != null) {
-            //save scroll position
-
             mCurrentChat = username;
             mChatPagerAdapter.addChatFriend(friend);
             friend.setChatActive(true);
@@ -1525,8 +1573,6 @@ public class ChatController {
 
             chatAdapter.addOrUpdateMessage(chatMessage, false, true, true);
             enqueueMessage(chatMessage);
-            processNextMessage();
-
         }
     }
 
@@ -1884,6 +1930,28 @@ public class ChatController {
         }
     }
 
+    public void closeAllTabs() {
+        int count = mChatPagerAdapter.getCount() - 1;
+        if (count > 0) {
+            for (int position = count; position > 0; position--) {
+                String name = mChatPagerAdapter.getChatName(position);
+                if (name != null) {
+                    SurespotLog.d(TAG, "closeTab, name: %s, position: %d", name, position);
+
+                    mChatPagerAdapter.removeChat(mViewPager.getId(), position);
+                    mFriendAdapter.setChatActive(name, false);
+                    mEarliestMessage.remove(name);
+                    destroyChatAdapter(name);
+                    SurespotLog.d(TAG, "closeTab, new tab name: %s, position: %d", mCurrentChat, position);
+                }
+            }
+
+            mIndicator.notifyDataSetChanged();
+            setCurrentChat(null);
+        }
+    }
+
+
     /**
      * Called when a user has been deleted
      *
@@ -1942,11 +2010,15 @@ public class ChatController {
 
         if (mMenuItems != null) {
             for (MenuItem menuItem : mMenuItems) {
-                // deleted users can't have images sent to them
-                if (menuItem.getItemId() == R.id.menu_capture_image_bar || menuItem.getItemId() == R.id.menu_send_image_bar) {
-
-                    menuItem.setVisible(enabled && !isDeleted);
+                //close all tabs only on home tab
+                if ((menuItem.getItemId() == R.id.menu_close_all_tabs)) {
+                    menuItem.setVisible(mCurrentChat == null);
                 }
+                // deleted users can't have images sent to them
+//                if (menuItem.getItemId() == R.id.menu_capture_image_bar || menuItem.getItemId() == R.id.menu_send_image_bar) {
+//
+//                    menuItem.setVisible(enabled && !isDeleted);
+//                }
                 else {
                     menuItem.setVisible(enabled);
                 }
@@ -1980,7 +2052,7 @@ public class ChatController {
         }
     }
 
-    public void setFriendAlias(String name, String data, String version, String iv, boolean hashed) {
+    public void setFriendAlias(final String name, String data, String version, String iv, boolean hashed) {
         final Friend friend = mFriendAdapter.getFriend(name);
         if (friend != null) {
             friend.setAliasData(data);
@@ -1992,15 +2064,16 @@ public class ChatController {
 
                 @Override
                 protected String doInBackground(Void... params) {
-                    String plainText = EncryptionController.symmetricDecrypt(mUsername, friend.getAliasVersion(), mUsername,
+                    String plainText = EncryptionController.symmetricDecrypt(mContext, mUsername, friend.getAliasVersion(), mUsername,
                             friend.getAliasVersion(), friend.getAliasIv(), friend.isAliasHashed(), friend.getAliasData());
-
+                    Utils.putAlias(mContext, mUsername, name, plainText);
                     return plainText;
                 }
 
                 protected void onPostExecute(String plainAlias) {
 
                     friend.setAliasPlain(plainAlias);
+
                     saveFriends();
                     mFriendAdapter.notifyFriendAliasChanged();
                     mFriendAdapter.sort();
@@ -2050,6 +2123,7 @@ public class ChatController {
 
     private void removeFriendAlias(String name) {
         final Friend friend = mFriendAdapter.getFriend(name);
+        Utils.removeAlias(mContext, mUsername, name);
         if (friend != null) {
             friend.setAliasData(null);
             friend.setAliasIv(null);
@@ -2144,7 +2218,7 @@ public class ChatController {
         final String version = IdentityController.getOurLatestVersion(mContext, mUsername);
 
         byte[] iv = EncryptionController.getIv();
-        final String cipherAlias = EncryptionController.symmetricEncrypt(mUsername, version, mUsername, version, alias, iv);
+        final String cipherAlias = EncryptionController.symmetricEncrypt(mContext, mUsername, version, mUsername, version, alias, iv);
         final String ivString = new String(ChatUtils.base64EncodeNowrap(iv));
 
         mNetworkController.assignFriendAlias(name, version, cipherAlias, ivString, new MainThreadCallbackWrapper(new MainThreadCallbackWrapper.MainThreadCallback() {
@@ -2197,10 +2271,13 @@ public class ChatController {
         if (mSocket == null) {
             IO.Options opts = new IO.Options();
 
+
             //override ssl context for self signed certs for dev
             if (!SurespotConfiguration.isSslCheckingStrict()) {
-                opts.sslContext = mNetworkController.getSSLContext();
-                opts.hostnameVerifier = mNetworkController.getHostnameVerifier();
+                IO.setDefaultOkHttpCallFactory(mNetworkController.getClient());
+                IO.setDefaultOkHttpWebSocketFactory(mNetworkController.getClient());
+                //opts.sslContext = mNetworkController.getSSLContext();
+                //opts.hostnameVerifier = mNetworkController.getHostnameVerifier();
             }
 
             opts.reconnection = false;
@@ -2235,7 +2312,7 @@ public class ChatController {
                             @SuppressWarnings("unchecked")
                             Map<String, List> headers = (Map<String, List>) args[0];
                             // set header
-                            Cookie cookie = IdentityController.getCookieForUser(mUsername);
+                            Cookie cookie = IdentityController.getCookieForUser(mContext, mUsername);
                             if (cookie != null) {
                                 ArrayList<String> cookies = new ArrayList<String>();
                                 cookies.add(cookie.name() + "=" + cookie.value());
@@ -2287,7 +2364,7 @@ public class ChatController {
         return;
     }
 
-    synchronized void enqueueMessage(SurespotMessage message) {
+    public synchronized void enqueueMessage(SurespotMessage message) {
         if (getConnectionState() == STATE_DISCONNECTED) {
             connect();
         }
@@ -2296,9 +2373,11 @@ public class ChatController {
             mSendQueue.add(message);
             saveMessageQueue();
         }
+
+        processNextMessage();
     }
 
-    synchronized void processNextMessage() {
+    public synchronized void processNextMessage() {
 
         //if we're ERRORED do nothing
         if (mErrored) {
@@ -2328,12 +2407,16 @@ public class ChatController {
 
                 switch (nextMessage.getMimeType()) {
                     case SurespotConstants.MimeTypes.TEXT:
+                    case SurespotConstants.MimeTypes.GIF_LINK:
                         prepAndSendTextMessage(nextMessage);
                         break;
                     case SurespotConstants.MimeTypes.IMAGE:
                     case SurespotConstants.MimeTypes.M4A:
                         prepAndSendFileMessage(nextMessage);
                         break;
+
+                    case SurespotConstants.MimeTypes.FILE:
+                        prepAndSendCloudMessage(nextMessage);
                 }
             }
         }
@@ -2396,7 +2479,7 @@ public class ChatController {
         }
 
         String ourLatestVersion = IdentityController.getOurLatestVersion(mContext, message.getFrom());
-        String theirLatestVersion = IdentityController.getTheirLatestVersion(message.getFrom(), message.getTo());
+        String theirLatestVersion = IdentityController.getTheirLatestVersion(mContext, message.getFrom(), message.getTo());
         synchronized (ChatController.this) {
 
             if (theirLatestVersion == null) {
@@ -2408,13 +2491,48 @@ public class ChatController {
 
 
             byte[] iv = ChatUtils.base64DecodeNowrap(message.getIv());
-            String result = EncryptionController.symmetricEncrypt(message.getFrom(), ourLatestVersion, message.getTo(), theirLatestVersion, plainData.toString(), iv);
+            String result = EncryptionController.symmetricEncrypt(mContext, message.getFrom(), ourLatestVersion, message.getTo(), theirLatestVersion, plainData.toString(), iv);
 
             if (result != null) {
                 //update unsent message
                 message.setData(result);
                 message.setFromVersion(ourLatestVersion);
                 message.setToVersion(theirLatestVersion);
+                return true;
+            }
+            else {
+                SurespotLog.d(TAG, "could not encrypt message, iv: %s", message.getIv());
+                message.setErrorStatus(500);
+                return false;
+            }
+        }
+    }
+
+    private Boolean encryptCloudMessage(SurespotMessage message) {
+        //if plain data is null, already being handled, do nothing
+        SurespotMessage.FileMessageData fmd = message.getFileMessageData();
+        if (fmd == null) {
+            return null;
+        }
+
+        String ourLatestVersion = message.getOurVersion(message.getFrom());
+        String theirLatestVersion = message.getTheirVersion(message.getFrom());
+        synchronized (ChatController.this) {
+
+            if (theirLatestVersion == null) {
+                SurespotLog.d(TAG, "could not encrypt message - could not get latest version, iv: %s", message.getIv());
+                //retry
+                message.setErrorStatus(0);
+                return false;
+            }
+
+
+            byte[] iv = ChatUtils.base64DecodeNowrap(message.getIv());
+            String result = EncryptionController.symmetricEncrypt(mContext, message.getFrom(), ourLatestVersion, message.getTo(), theirLatestVersion, fmd.toJSONStringSocket(), iv);
+
+            if (result != null) {
+                //update unsent message
+                message.setData(result);
                 return true;
             }
             else {
@@ -2470,7 +2588,7 @@ public class ChatController {
                         try {
 
                             final String ourVersion = IdentityController.getOurLatestVersion(mContext, message.getFrom());
-                            final String theirVersion = IdentityController.getTheirLatestVersion(message.getFrom(), message.getTo());
+                            final String theirVersion = IdentityController.getTheirLatestVersion(mContext, message.getFrom(), message.getTo());
 
                             if (theirVersion == null) {
                                 SurespotLog.d(TAG, "prepAndSendFileMessage: could not encrypt file message - could not get latest version, iv: %s", message.getIv());
@@ -2491,7 +2609,7 @@ public class ChatController {
                             //encrypt
                             PipedOutputStream encryptionOutputStream = new PipedOutputStream();
                             final PipedInputStream encryptionInputStream = new PipedInputStream(encryptionOutputStream);
-                            EncryptionController.runEncryptTask(mUsername, ourVersion, message.getTo(), theirVersion, iv, new BufferedInputStream(fileInputStream), encryptionOutputStream);
+                            EncryptionController.runEncryptTask(mContext, mUsername, ourVersion, message.getTo(), theirVersion, iv, new BufferedInputStream(fileInputStream), encryptionOutputStream);
 
                             int bufferSize = 1024;
                             byte[] buffer = new byte[bufferSize];
@@ -2531,7 +2649,6 @@ public class ChatController {
                             message.setErrorStatus(500);
                             return false;
                         }
-
                     }
                 }
 
@@ -2642,7 +2759,6 @@ public class ChatController {
                                 errorMessageQueue();
                             }
                             break;
-
                     }
                 }
             }
@@ -3009,6 +3125,7 @@ public class ChatController {
             SurespotLog.d(TAG, "ProcessNextMessage task run.");
             processNextMessage();
         }
+
     }
 
 
@@ -3130,6 +3247,16 @@ public class ChatController {
             SurespotLog.d(TAG, "Connection terminated.");
             mCurrentSendIv = null;
             disconnect();
+
+            if (args.length > 0) {
+                if ("io server disconnect".equals(args[0])) {
+                    SurespotLog.d(TAG, "got server disconnect from websocket");
+                    tryReLogin();
+                    return;
+                }
+            }
+
+
             connect();
             processNextMessage();
         }
@@ -3318,5 +3445,161 @@ public class ChatController {
             return true;
         }
         return false;
+    }
+
+    private void prepAndSendCloudMessage(final SurespotMessage message) {
+        SurespotLog.d(TAG, "prepAndSendCloudMessage, current thread: %s", Thread.currentThread().getName());
+        if (!isMessageReadyToSend(message)) {
+            Runnable runnable = new Runnable() {
+                @Override
+                public void run() {
+
+                    //make sure it's pointing to a local file
+
+                    synchronized (message) {
+                        //could be null because it's already being processed
+                        SurespotMessage.FileMessageData fmd = message.getFileMessageData();
+                        SurespotLog.d(TAG, "prepAndSendCloudMessage: plainData: %s", fmd.toString());
+                        if (fmd == null) {
+                            SurespotLog.d(TAG, "prepAndSendCloudMessage: fmd null");
+                            return;
+                        }
+
+                        if (!TextUtils.isEmpty(fmd.getCloudUrl())) {
+                            SurespotLog.d(TAG, "prepAndSendCloudMessage: data already encrypted, doing nothing");
+                            return;
+                        }
+
+                        final String ourVersion = IdentityController.getOurLatestVersion(mContext, message.getFrom());
+                        final String theirVersion = IdentityController.getTheirLatestVersion(mContext, message.getFrom(), message.getTo());
+                        final String iv = message.getIv();
+
+                        if (theirVersion == null) {
+                            SurespotLog.d(TAG, "prepAndSendCloudMessage: could not encrypt file message - could not get latest version, iv: %s", message.getIv());
+                            //retry
+                            message.setErrorStatus(0);
+                            return;
+                        }
+
+                        PipedInputStream encryptionInputStream;
+                        InputStream fileInputStream;
+                        try {
+                            fileInputStream = mContext.getContentResolver().openInputStream(Uri.parse(fmd.getLocalUri()));
+                            //encrypt
+                            PipedOutputStream encryptionOutputStream = new PipedOutputStream();
+                            encryptionInputStream = new PipedInputStream(encryptionOutputStream);
+                            EncryptionController.runEncryptTask(mContext, message.getFrom(), ourVersion, message.getTo(), theirVersion, iv, new BufferedInputStream(fileInputStream), encryptionOutputStream);
+
+                        }
+                        catch (Exception e) {
+                            //TODO this could be ugly, don't have access to the content anymore ie if process stops which is how we'd end up here
+                            SurespotLog.w(TAG, "exception opening data: %s", fmd.getLocalUri());
+                            //TODO error?
+//                            message.setPlainData(plainData);
+//                            messageSendCompleted(message);
+//                            if (!scheduleResendTimer()) {
+//                                errorMessageQueue();
+//                            }
+                            mHandler.post(new Runnable() {
+                                @Override
+                                public void run() {
+                                    ChatController.this.deleteMessage(message, false);
+                                }
+                            });
+
+                            return;
+                        }
+
+                        FileTransferUtils.createFile(
+                                mContext,
+                                mDriveHelper,
+                                message.getFrom(),
+                                encryptionInputStream,
+                                new IAsyncCallback<SurespotMessage.FileMessageData>() {
+
+                                    @Override
+                                    public void handleResponse(final SurespotMessage.FileMessageData fileMessageData) {
+                                        if (fileMessageData != null) {
+                                            SurespotLog.d(TAG, "received file message data: %s", fileMessageData);
+
+                                            message.getFileMessageData().setCloudUrl(fileMessageData.getCloudUrl());
+                                            message.getFileMessageData().setSize(fileMessageData.getSize());
+                                            message.setFromVersion(ourVersion);
+                                            message.setToVersion(theirVersion);
+
+                                            //encrypt the url to the encrypted drive data
+                                            final Boolean success = encryptCloudMessage(message);
+
+                                            SurespotLog.d(TAG, "success: %b", success);
+                                            if (success != null) {
+                                                mHandler.post(new Runnable() {
+                                                    @Override
+                                                    public void run() {
+                                                        addMessage(message);
+                                                        if (success) {
+
+                                                            //set the url to the encrypted drive data
+
+                                                            sendTextMessage(message);
+                                                        }
+                                                        else {
+                                                            //save the link to the local file so we can open it
+                                                            //   message.setPlainData(plainData);
+                                                            messageSendCompleted(message);
+                                                            if (!scheduleResendTimer()) {
+                                                                errorMessageQueue();
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }
+                                });
+                    }
+                }
+            };
+
+            SurespotApplication.THREAD_POOL_EXECUTOR.execute(runnable);
+        }
+        else {
+            sendTextMessage(message);
+        }
+    }
+
+    public void handleVoiceMessagePlayed(SurespotMessage playedMessage) {
+        ChatFragment cf = getChatFragment(playedMessage.getFrom());
+        if (cf != null) {
+            ListView messageListView = cf.getView().findViewById(R.id.message_list);
+            ChatAdapter chatAdapter = getChatAdapter(playedMessage.getFrom(), false);
+            if (chatAdapter != null) {
+                if (playedMessage.getTo().equals(mUsername) && playedMessage.getFrom().equals(mCurrentChat)) {
+                    int lastPlayedId = playedMessage.getId();
+                    for (SurespotMessage message : chatAdapter.getMessages()) {
+                        if (message.getId() != null && message.getId() > lastPlayedId && message.getMimeType().equals(SurespotConstants.MimeTypes.M4A) && !message.isVoicePlayed()) {
+                            VoiceController.playVoiceMessage(mContext, getSeekBarForMessage(messageListView, message), message);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private SeekBar getSeekBarForMessage(ListView listView, SurespotMessage message) {
+        final int firstListItemPosition = 0;
+        final int lastListItemPosition = listView.getChildCount();
+
+        for (int pos = firstListItemPosition; pos <= lastListItemPosition; pos++) {
+            View listItemView = listView.getChildAt(pos);
+            if (listItemView != null) {
+                SeekBar seekBar = listItemView.findViewById(R.id.seekBarVoice);
+                if (seekBar != null && VoiceController.getSeekbarMessage(seekBar) == message) {
+                    return seekBar;
+                }
+            }
+        }
+
+        return null;
     }
 }

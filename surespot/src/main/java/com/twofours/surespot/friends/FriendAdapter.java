@@ -56,7 +56,7 @@ public class FriendAdapter extends BaseAdapter {
     public FriendAdapter(Context context, String username) {
         mContext = context;
         mUsername = username;
-        mFriendAliasDecryptor = new FriendAliasDecryptor(this);
+        mFriendAliasDecryptor = new FriendAliasDecryptor(context,this);
 
         // clear invite notifications
         mNotificationManager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -79,15 +79,21 @@ public class FriendAdapter extends BaseAdapter {
         mLoadingCallback = callback;
     }
 
-    public Friend getFriend(String friendName) {
-        synchronized (mFriends) {
-            for (Friend friend : mFriends) {
+    public static Friend getFriend( List<Friend> friends, String friendName) {
+        synchronized (friends) {
+            for (Friend friend : friends) {
                 if (friend.getName().equals(friendName)) {
                     return friend;
                 }
             }
         }
         return null;
+
+    }
+
+
+    public Friend getFriend(String friendName) {
+        return getFriend(mFriends, friendName);
     }
 
     public void addNewFriend(String name) {
@@ -167,11 +173,12 @@ public class FriendAdapter extends BaseAdapter {
         synchronized (mFriends) {
             for (Friend friend : mFriends) {
                 if (friend.hasFriendAliasAssigned() && TextUtils.isEmpty(friend.getAliasPlain())) {
-                    String plainText = EncryptionController.symmetricDecrypt(mUsername, friend.getAliasVersion(), mUsername,
+                    String plainText = EncryptionController.symmetricDecrypt(mContext, mUsername, friend.getAliasVersion(), mUsername,
                             friend.getAliasVersion(), friend.getAliasIv(), friend.isAliasHashed(), friend.getAliasData());
 
               //      SurespotLog.v(TAG, "setting alias for %s", friend.getName());
                     friend.setAliasPlain(plainText);
+                    Utils.putAlias(mContext, mUsername, friend.getName(), plainText);
                 }
             }
         }
@@ -235,6 +242,7 @@ public class FriendAdapter extends BaseAdapter {
             friendViewHolder.tvStatus = (TextView) convertView.findViewById(R.id.friendStatus);
             friendViewHolder.vgActivity = convertView.findViewById(R.id.messageActivity);
             friendViewHolder.avatarImage = (ImageView) convertView.findViewById(R.id.friendAvatar);
+            friendViewHolder.muteImage = (ImageView) convertView.findViewById(R.id.friendMute);
             convertView.setTag(friendViewHolder);
 
         } else {
@@ -255,10 +263,30 @@ public class FriendAdapter extends BaseAdapter {
         );
 
         if (friend.hasFriendImageAssigned()) {
-            FriendImageDownloader.download(friendViewHolder.avatarImage, mUsername, friend);
+            FriendImageDownloader.download(mContext, friendViewHolder.avatarImage, mUsername, friend);
         } else {
-            friendViewHolder.avatarImage.setImageResource(android.R.color.transparent);
+        	friendViewHolder.avatarImage.setImageDrawable(friendViewHolder.avatarImage.getResources().getDrawable(R.drawable.surespot_logo));
+            friendViewHolder.avatarImage.setAlpha(0.5f);
         }
+
+        if (friend.isMuted()) {
+            friendViewHolder.muteImage.setVisibility(View.VISIBLE);
+            if (friend.hasFriendImageAssigned()) {
+               friendViewHolder.avatarImage.setAlpha(0.5f);
+            }
+            else {
+                friendViewHolder.avatarImage.setAlpha(0.25f);
+            }
+        } else {
+            if (friend.hasFriendImageAssigned()) {
+                friendViewHolder.avatarImage.setAlpha(1.0f);
+            }
+            else {
+                friendViewHolder.avatarImage.setAlpha(0.5f);
+            }
+            friendViewHolder.muteImage.setVisibility(View.GONE);
+        }
+
 
         if (friend.isInvited() || friend.isNewFriend() || friend.isInviter() || friend.isDeleted()) {
             friendViewHolder.tvStatus.setTypeface(null, Typeface.ITALIC);
@@ -383,6 +411,7 @@ public class FriendAdapter extends BaseAdapter {
         public View friendActive;
         public View friendInactive;
         public Friend friend;
+        public ImageView muteImage;
     }
 
     public void sort() {

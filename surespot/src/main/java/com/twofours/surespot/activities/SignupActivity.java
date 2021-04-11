@@ -1,15 +1,12 @@
 package com.twofours.surespot.activities;
 
 import android.app.Activity;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
-import android.content.ServiceConnection;
 import android.graphics.Color;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
-import android.os.IBinder;
 import android.os.Looper;
 import android.text.InputFilter;
 import android.text.Spannable;
@@ -35,21 +32,19 @@ import android.widget.TextView.BufferType;
 import android.widget.TextView.OnEditorActionListener;
 
 import com.twofours.surespot.R;
-import com.twofours.surespot.SurespotApplication;
+import com.twofours.surespot.SurespotConfiguration;
 import com.twofours.surespot.SurespotConstants;
 import com.twofours.surespot.SurespotLog;
 import com.twofours.surespot.backup.ImportIdentityActivity;
-import com.twofours.surespot.chat.ChatUtils;
 import com.twofours.surespot.encryption.EncryptionController;
 import com.twofours.surespot.identity.IdentityController;
 import com.twofours.surespot.network.CookieResponseHandler;
 import com.twofours.surespot.network.IAsyncCallback;
 import com.twofours.surespot.network.MainThreadCallbackWrapper;
 import com.twofours.surespot.network.NetworkManager;
-import com.twofours.surespot.services.CredentialCachingService;
-import com.twofours.surespot.services.CredentialCachingService.CredentialCachingBinder;
 import com.twofours.surespot.ui.LetterOrDigitInputFilter;
 import com.twofours.surespot.ui.MultiProgressDialog;
+import com.twofours.surespot.utils.ChatUtils;
 import com.twofours.surespot.utils.UIUtils;
 import com.twofours.surespot.utils.Utils;
 
@@ -64,14 +59,12 @@ public class SignupActivity extends Activity {
     private Button signupButton;
     private MultiProgressDialog mMpd;
     private MultiProgressDialog mMpdCheck;
-    private boolean mSignupAttempted;
-    private boolean mCacheServiceBound;
 
     private View mUsernameValid;
     private View mUsernameInvalid;
     private Menu mMenuOverflow;
-    private boolean mLoggedIn = false;
     private Handler mHandler = new Handler(Looper.getMainLooper());
+    private boolean mSigningUp = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -98,15 +91,11 @@ public class SignupActivity extends Activity {
         mUsernameValid = findViewById(R.id.ivUsernameValid);
         mUsernameInvalid = findViewById(R.id.ivUsernameInvalid);
 
-        SurespotLog.d(TAG, "binding cache service, service is null? %b", SurespotApplication.getCachingService() == null);
-        Intent cacheIntent = new Intent(this, CredentialCachingService.class);
-        bindService(cacheIntent, mConnection, Context.BIND_AUTO_CREATE);
-
         mMpd = new MultiProgressDialog(this, getString(R.string.create_user_progress), 250);
         mMpdCheck = new MultiProgressDialog(this, getString(R.string.user_exists_progress), 500);
 
         EditText editText = (EditText) SignupActivity.this.findViewById(R.id.etSignupUsername);
-        editText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConstants.MAX_USERNAME_LENGTH), new LetterOrDigitInputFilter()});
+        editText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConfiguration.MAX_USERNAME_LENGTH), new LetterOrDigitInputFilter()});
         editText.setOnFocusChangeListener(new OnFocusChangeListener() {
 
             @Override
@@ -127,10 +116,10 @@ public class SignupActivity extends Activity {
         });
 
         final EditText pwText = (EditText) findViewById(R.id.etSignupPassword);
-        pwText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConstants.MAX_PASSWORD_LENGTH)});
+        pwText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConfiguration.MAX_PASSWORD_LENGTH)});
 
         final EditText pwConfirmText = (EditText) findViewById(R.id.etSignupPasswordConfirm);
-        pwConfirmText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConstants.MAX_PASSWORD_LENGTH)});
+        pwConfirmText.setFilters(new InputFilter[]{new InputFilter.LengthFilter(SurespotConfiguration.MAX_PASSWORD_LENGTH)});
         pwConfirmText.setOnEditorActionListener(new OnEditorActionListener() {
             @Override
             public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
@@ -173,30 +162,6 @@ public class SignupActivity extends Activity {
 
     }
 
-    private ServiceConnection mConnection = new ServiceConnection() {
-        public void onServiceConnected(ComponentName name, IBinder service) {
-            SurespotLog.v(TAG, "caching service bound");
-            CredentialCachingBinder binder = (CredentialCachingBinder) service;
-
-            CredentialCachingService credentialCachingService = binder.getService();
-            mCacheServiceBound = true;
-
-            SurespotApplication.setCachingService(credentialCachingService);
-
-            // if they've already clicked login, login
-            if (mSignupAttempted) {
-                mSignupAttempted = false;
-                signup();
-                mMpd.decrProgress();
-            }
-        }
-
-        @Override
-        public void onServiceDisconnected(ComponentName name) {
-
-        }
-    };
-
     private void checkUsername() {
         final EditText userText = (EditText) SignupActivity.this.findViewById(R.id.etSignupUsername);
         final String username = userText.getText().toString();
@@ -221,7 +186,7 @@ public class SignupActivity extends Activity {
 
 
             @Override
-            public void onResponse(Call call, Response response, String responseString) throws IOException {
+            public void onResponse(Call call, Response response, String responseString) {
                 mMpdCheck.decrProgress();
                 if (response.isSuccessful()) {
                     if (responseString.equals("true")) {
@@ -252,11 +217,6 @@ public class SignupActivity extends Activity {
     }
 
     private void signup() {
-        if (SurespotApplication.getCachingService() == null) {
-            mSignupAttempted = true;
-            mMpd.incrProgress();
-            return;
-        }
 
         final EditText userText = (EditText) SignupActivity.this.findViewById(R.id.etSignupUsername);
         final String username = userText.getText().toString();
@@ -279,6 +239,13 @@ public class SignupActivity extends Activity {
             return;
         }
 
+        //prevent multiple signup attempts
+        if (!mSigningUp) {
+            mSigningUp = true;
+        }
+        else {
+            return;
+        }
         mMpd.incrProgress();
 
         // make sure we can create the file
@@ -289,6 +256,7 @@ public class SignupActivity extends Activity {
             // pwText.setText("");
             userText.requestFocus();
             mMpd.decrProgress();
+            mSigningUp = false;
             setUsernameValidity(false);
             return;
         }
@@ -338,8 +306,8 @@ public class SignupActivity extends Activity {
                                     confirmPwText.setText("");
                                     pwText.setText("");
 
+
                                     if (responseCode == 201) {
-                                        mLoggedIn = true;
                                         // save key pair now
                                         // that we've created
                                         // a
@@ -371,6 +339,7 @@ public class SignupActivity extends Activity {
                                                 startActivity(newIntent);
                                                 Utils.clearIntent(intent);
                                                 mMpd.decrProgress();
+                                                mSigningUp = false;
                                                 InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
                                                 imm.hideSoftInputFromWindow(pwText.getWindowToken(), 0);
 
@@ -384,6 +353,8 @@ public class SignupActivity extends Activity {
                                         SurespotLog.w(TAG, "201 not returned on user create.");
                                         // confirmPwText.setText("");
                                         // pwText.setText("");
+                                        mMpd.decrProgress();
+                                        mSigningUp = false;
                                         pwText.requestFocus();
                                         // setUsernameValidity(false);
                                     }
@@ -393,35 +364,28 @@ public class SignupActivity extends Activity {
                                 public void onFailure(Throwable arg0, int code, String content) {
                                     SurespotLog.i(TAG,  "signup error %s", content);
                                     mMpd.decrProgress();
-                                    Utils.makeToast(SignupActivity.this, getString(R.string.could_not_create_user));
+                                    mSigningUp = false;
+
+                                    switch (code) {
+                                        case 403:
+                                            Utils.makeToast(SignupActivity.this, getString(R.string.signup_update));
+                                            break;
+                                        default:
+                                            Utils.makeToast(SignupActivity.this, getString(R.string.could_not_create_user));
+                                    }
                                 }
                             });
                         }
                     }.execute();
+
+                }
+                else {
+                    mMpd.decrProgress();
+                    mSigningUp = false;
+                    Utils.makeToast(SignupActivity.this, getString(R.string.could_not_create_user));
                 }
             }
         });
-    }
-
-    @Override
-    protected void onDestroy() {
-        super.onDestroy();
-
-        if (mCacheServiceBound && mConnection != null) {
-            unbindService(mConnection);
-        }
-
-        if (!mLoggedIn && isTaskRoot()) {
-            boolean stopCache = Utils.getSharedPrefsBoolean(this, "pref_stop_cache_logout");
-
-            if (stopCache) {
-
-                if (SurespotApplication.getCachingService() != null) {
-                    SurespotLog.i(TAG, "stopping cache");
-                    SurespotApplication.getCachingService().stopSelf();
-                }
-            }
-        }
     }
 
     @Override

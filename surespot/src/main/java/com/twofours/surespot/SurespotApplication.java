@@ -2,7 +2,6 @@ package com.twofours.surespot;
 
 import android.app.Application;
 import android.content.Context;
-import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.support.multidex.MultiDex;
@@ -80,7 +79,7 @@ public class SurespotApplication extends Application {
 
         try {
             info = manager.getPackageInfo(this.getPackageName(), 0);
-            mVersion = info.versionName;
+            mVersion = Integer.toString(info.versionCode);
         } catch (PackageManager.NameNotFoundException e) {
             mVersion = "unknown";
         }
@@ -106,7 +105,7 @@ public class SurespotApplication extends Application {
             SurespotLog.w(TAG, e, "could not create file cache controller");
         }
 
-        boolean oneTimeGotNoCase = Utils.getSharedPrefsBoolean(this, "72onetime");
+        boolean oneTimeGotNoCase = Utils.getSharedPrefsBoolean(this, "73onetime");
         if (!oneTimeGotNoCase) {
 
 
@@ -117,17 +116,12 @@ public class SurespotApplication extends Application {
                 @Override
                 public void handleResponse(Void result) {
                     SurespotLog.d(TAG, "cache cleared");
-                    Utils.putSharedPrefsBoolean(SurespotApplication.this, "72onetime", true);
+                    Utils.putSharedPrefsBoolean(SurespotApplication.this, "73onetime", true);
                 }
             });
 
 
         }
-
-
-        SurespotLog.v(TAG, "starting cache service");
-        Intent cacheIntent = new Intent(this, CredentialCachingService.class);
-        startService(cacheIntent);
 
         mBillingController = new BillingController(this);
         FileUtils.wipeImageCaptureDir(this);
@@ -151,12 +145,11 @@ public class SurespotApplication extends Application {
         return false;
     }
 
-    public static CredentialCachingService getCachingService() {
+    public static CredentialCachingService getCachingService(Context context) {
+        if (mCredentialCachingService == null) {
+            mCredentialCachingService = new CredentialCachingService(context);
+        }
         return mCredentialCachingService;
-    }
-
-    public static void setCachingService(CredentialCachingService credentialCachingService) {
-        SurespotApplication.mCredentialCachingService = credentialCachingService;
     }
 
     public static StateController getStateController() {
